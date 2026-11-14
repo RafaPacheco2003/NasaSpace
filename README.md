@@ -23,6 +23,7 @@ El Frontend solo habla con esta API; la API habla con IRSA (SPHEREx, WISE), CDS 
 > ejemplos reales): [`docs/DOCUMENTACION_API.md`](docs/DOCUMENTACION_API.md)
 > · **Swagger**: <http://localhost:8000/docs> · **OpenAPI**: [`docs/openapi.yaml`](docs/openapi.yaml)
 > · **Probar todo**: `./scripts/probar_api.sh`
+> · **Ejemplos reales de cada servicio** (qué devuelve y para qué sirve): [`docs/EJEMPLOS_REALES.md`](docs/EJEMPLOS_REALES.md)
 
 ---
 
