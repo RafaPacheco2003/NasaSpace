@@ -1,0 +1,19 @@
+services:
+  api:
+    build: ./backend
+    image: spherex-sky-api:0.3.0
+    container_name: spherex-sky-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      # irsa = datos reales · mock = datos sintéticos sin red (SPHEREX_MODE=mock docker compose up)
+      SPHEREX_MODE: ${SPHEREX_MODE:-irsa}
+    volumes:
+      - sky-cache:/data/cache
+    restart: unless-stopped
+
+volumes:
+  sky-cache:
