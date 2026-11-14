@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 from . import errors, http
 from .config import settings
 from .ratelimit import rate_limit_middleware
-from .routers import analysis, catalogs, images, system
+from .routers import analysis, asteroids, catalogs, images, system
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 for _noisy in ("reproject", "reproject.common", "httpx"):
@@ -34,7 +34,7 @@ El navegador solo llama a esta API. La API consulta estas **APIs externas** (pú
 | **AllWISE** (IRSA TAP / Gator) | NASA/IPAC | overlay (catalog=wise) |
 | **JPL Horizons** | NASA JPL | predict (asteroides y cometas) |
 
-**Reglas:** solo GET, sin autenticación, CORS abierto. Coordenadas en grados (ICRS/J2000); radio, fov y apertura
+**Reglas:** GET (salvo `POST /api/asteroids/predict`, el modelo ML), sin autenticación, CORS abierto. Coordenadas en grados (ICRS/J2000); radio, fov y apertura
 en segundos de arco. Timeout 10 s por fuente externa con 1 reintento. Caché 24 h (coordenadas redondeadas a 1″).
 Si falla solo una de las fuentes pedidas → 200 con `partial: true`.
 
@@ -64,6 +64,7 @@ app = FastAPI(
         {"name": "Imágenes", "description": "Imágenes de SPHEREx: metadatos, secuencia (blink), PNG, apilado y resta (IRSA)"},
         {"name": "Trabajos", "description": "Estado de los procesos lentos (patrón 202 + trabajo)"},
         {"name": "Análisis", "description": "Espectro, predicción de posiciones y overlays (IRSA, SIMBAD, Horizons, Gaia, WISE)"},
+        {"name": "Asteroides (ML)", "description": "Predicción EXPERIMENTAL de posición con un LSTM (ONNX) a partir de 3 observaciones Gaia"},
         {"name": "Sistema", "description": "Salud de la API y de las APIs externas"},
     ],
 )
@@ -74,7 +75,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Retry-After"],
 )
@@ -102,6 +103,7 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 app.include_router(catalogs.router)
 app.include_router(images.router)
 app.include_router(analysis.router)
+app.include_router(asteroids.router)
 app.include_router(system.router)
 
 

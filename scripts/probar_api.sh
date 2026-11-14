@@ -174,6 +174,25 @@ req "/api/jobs/seq_ffffffffffff"
 [ "$CODE" = "404" ] && ok "Trabajo inexistente → 404" "$(j .error.message)" || fail "jobs 404" "HTTP $CODE"
 
 # =============================================================================
+titulo "Asteroides (ML) — POST /api/asteroids/predict  (LSTM ONNX local)"
+# =============================================================================
+OBS='[{"epoch":1800.0,"ra":40.0,"dec":10.0},{"epoch":1800.5,"ra":40.1,"dec":10.1},{"epoch":1801.5,"ra":40.3,"dec":10.2}]'
+ast() { req "/api/asteroids/predict" -X POST -H "Content-Type: application/json" -d "$1"; }
+ast "{\"asteroid_id\":1,\"observations\":$OBS,\"horizon_days\":1.5}"
+if [ "$CODE" = "200" ]; then
+  ok "Pronóstico a 1.5 días → RA $(j .predicted_ra_deg | cut -c1-9), Dec $(j .predicted_dec_deg | cut -c1-9)" "forecast_epoch=$(j .forecast_epoch) · $(j .forecast_time) · status=$(j .status)"
+  RA15=$(j .predicted_ra_deg)
+  ast "{\"observations\":$OBS,\"horizon_days\":3}"
+  [ "$CODE" = "200" ] && [ "$(j .predicted_ra_deg)" != "$RA15" ] && ok "La salida cambia con horizon_days (3 días → RA $(j .predicted_ra_deg | cut -c1-9))" || fail "horizonte" "HTTP $CODE"
+else
+  fail "asteroids/predict" "HTTP $CODE $(err)"
+fi
+ast '{"observations":[{"epoch":1800.5,"ra":40.1,"dec":10.1},{"epoch":1800.0,"ra":40.0,"dec":10.0},{"epoch":1801.5,"ra":40.3,"dec":10.2}],"horizon_days":1.5}'
+[ "$CODE" = "400" ] && ok "Observaciones desordenadas → 400" "$(err)" || fail "desordenadas" "HTTP $CODE"
+ast "{\"observations\":$OBS,\"horizon_days\":-1}"
+[ "$CODE" = "400" ] && ok "Horizonte negativo → 400" "$(err)" || fail "horizonte negativo" "HTTP $CODE"
+
+# =============================================================================
 if [ "$RAPIDO" = "0" ]; then
 # =============================================================================
 titulo "Imágenes — /api/sequence  (202 + trabajo · recortes FITS de IRSA)"

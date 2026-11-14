@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dataclasses import dataclass
 
 
@@ -62,6 +63,10 @@ class Settings:
     # allwise (posiciones época 2010.56, pm en mas/año) o catwise (época 2015.4, pm en ″/año)
     wise_catalog: str = _str("WISE_CATALOG", "allwise").lower()
     overlay_max_sources: int = _int("OVERLAY_MAX_SOURCES", 5000)
+
+    # --- Modelo ONNX (predicción experimental de asteroides) -------------
+    # Carpeta con asteroid_lstm.onnx + preprocessing.json
+    model_dir: str = _str("MODEL_DIR", str(Path(__file__).resolve().parent.parent / "models"))
 
     # --- Red / tiempos --------------------------------------------------
     external_timeout_s: float = _float("EXTERNAL_TIMEOUT_S", 10)

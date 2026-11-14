@@ -313,6 +313,55 @@ class SourceStatus(BaseModel):
     last_error: Optional[str] = None
 
 
+class ModelStatus(BaseModel):
+    loaded: bool
+    file: Optional[str] = None
+    error: Optional[str] = None
+
+
+# --- Asteroides (modelo ONNX) -----------------------------------------------------
+
+class AsteroidObservation(BaseModel):
+    """Una posición observada. Indicar `epoch` (escala Gaia) **o** `time` (ISO UTC), no ambos."""
+    epoch: Optional[float] = Field(None, description="Días TCB desde JD 2455197.5 (columna `epoch` de Gaia SSO). NO es Unix ni año.")
+    time: Optional[str] = Field(None, description="Alternativa a epoch: fecha ISO 8601 UTC; la API la convierte a epoch Gaia.")
+    ra: float = Field(ge=0, lt=360, description="Ascensión recta en grados (ICRS)")
+    dec: float = Field(ge=-90, le=90, description="Declinación en grados (ICRS)")
+
+
+class AsteroidForecastRequest(BaseModel):
+    model_config = _ex({
+        "asteroid_id": 1,
+        "observations": [
+            {"epoch": 1800.0, "ra": 40.0, "dec": 10.0},
+            {"epoch": 1800.5, "ra": 40.1, "dec": 10.1},
+            {"epoch": 1801.5, "ra": 40.3, "dec": 10.2},
+        ],
+        "horizon_days": 1.5,
+    })
+    asteroid_id: Optional[int] = Field(None, description="Solo identificador; no entra al modelo")
+    observations: list[AsteroidObservation] = Field(description="Exactamente 3, del mismo asteroide, ordenadas por fecha; huecos ≤ 3 días")
+    horizon_days: float = Field(gt=0, le=3, description="Días desde la última observación (0 < h ≤ 3)")
+
+
+class AsteroidForecastResult(BaseModel):
+    model_config = _ex({
+        "asteroid_id": 1, "predicted_ra_deg": 40.652007, "predicted_dec_deg": 10.217897, "forecast_epoch": 1803.0,
+        "forecast_time": "2014-12-08T23:58:34.254Z", "horizon_days": 1.5, "status": "experimental",
+        "frame": "ICRS, geometría Gaia-céntrica (la del entrenamiento)",
+        "time_scale": "epoch = días TCB desde JD 2455197.5 (Gaia)",
+    })
+    asteroid_id: Optional[int] = None
+    predicted_ra_deg: float
+    predicted_dec_deg: float
+    forecast_epoch: float = Field(description="Epoch Gaia de la predicción = última epoch + horizon_days")
+    forecast_time: str = Field(description="La misma fecha en ISO UTC")
+    horizon_days: float
+    status: Literal["experimental"]
+    frame: str
+    time_scale: str
+
+
 class StatusResult(BaseModel):
     """Estado de la API y de cada fuente externa."""
     model_config = _ex({"status": "ok", "version": "0.3.0", "data_release": "SPHEREx DR1 (IRSA, colección spherex_dr1)",
@@ -323,6 +372,7 @@ class StatusResult(BaseModel):
     data_release: str
     spherex_mode: Optional[str] = None
     sources: dict[str, SourceStatus] = Field(description="spherex, simbad, ned, gaia, wise, horizons")
+    models: Optional[dict[str, ModelStatus]] = Field(None, description="Modelos de ML locales (asteroid_lstm)")
 
 
 # --- Bloques de respuestas para los decoradores ---------------------------------
@@ -331,7 +381,9 @@ ERR = {
     400: {"model": Error, "description": "Falta un parámetro, coordenadas fuera de rango o límites excedidos"},
     404: {"model": Error, "description": "No se encontró el nombre, el frame o el trabajo (expirado)"},
     429: {"model": Error, "description": "Demasiadas peticiones desde la misma IP (cabecera Retry-After)"},
+    500: {"model": Error, "description": "Error interno"},
     502: {"model": Error, "description": "Fallaron todas las fuentes pedidas"},
+    503: {"model": Error, "description": "El modelo ONNX no está disponible (faltan archivos o no cargó)"},
     504: {"model": Error, "description": "Se agotó el tiempo en todas las fuentes pedidas"},
 }
 PNG = {200: {"content": {"image/png": {}}, "description": "Imagen PNG (TAN, norte arriba, este a la izquierda)"}}

@@ -39,6 +39,7 @@ BA="ra=269.446227&dec=4.769463"      # Barnard
 13. [`/api/jobs/{id}`](#13-apijobsid--progreso-de-los-procesos-lentos)
 14. [Cómo se encadenan en la app](#14-cómo-se-encadenan-en-la-app)
 15. [⚠️ Error típico: espectro de un objeto que se mueve](#15-️-error-típico-espectro-de-un-objeto-que-se-mueve)
+16. [`POST /api/asteroids/predict` (modelo ML)](#16-post-apiasteroidspredict--modelo-ml-de-asteroides)
 
 ---
 
@@ -654,3 +655,70 @@ Regla: **posición y fechas siempre juntas.** Cuanto más rápido se mueve el ob
 
 Para objetos fijos (galaxias, estrellas lentas, variables como RW Aur o R Dra) no hace falta: se puede usar
 todo el rango de fechas, y ordenar los puntos por `date_obs` da la curva de luz.
+
+---
+
+## 16. `POST /api/asteroids/predict` — modelo ML de asteroides
+
+Red **LSTM exportada a ONNX** que corre dentro del backend (sin API externa, ~25 ms). Con 3 posiciones del mismo
+asteroide (separadas ≤ 3 días) pronostica dónde estará `horizon_days` después (≤ 3 días).
+Detalle completo: [`MODELO_ASTEROIDES.md`](MODELO_ASTEROIDES.md).
+
+```bash
+curl -s -X POST "$B/asteroids/predict" -H 'Content-Type: application/json' -d '{
+  "asteroid_id": 1,
+  "observations": [
+    {"epoch": 1800.0, "ra": 40.0, "dec": 10.0},
+    {"epoch": 1800.5, "ra": 40.1, "dec": 10.1},
+    {"epoch": 1801.5, "ra": 40.3, "dec": 10.2}
+  ],
+  "horizon_days": 1.5
+}'
+```
+
+**Respuesta real:**
+
+```json
+{
+  "asteroid_id": 1,
+  "predicted_ra_deg": 40.65200699257059,
+  "predicted_dec_deg": 10.217896905462919,
+  "forecast_epoch": 1803.0,
+  "forecast_time": "2014-12-08T23:58:34.254Z",
+  "horizon_days": 1.5,
+  "status": "experimental",
+  "frame": "ICRS, geometría Gaia-céntrica (la del entrenamiento)",
+  "time_scale": "epoch = días TCB desde JD 2455197.5 (Gaia)"
+}
+```
+
+| Dato | Valor | Qué es |
+|---|---|---|
+| `predicted_ra_deg` | 40.652007 | RA pronosticada: siguió avanzando desde 40.3 (≈ +0.23° en 1.5 días) |
+| `predicted_dec_deg` | 10.217897 | Dec pronosticada: casi se mantiene (la red frena la subida en Dec) |
+| `forecast_epoch` | 1803.0 | 1801.5 + 1.5 días, en la escala de Gaia (días TCB desde JD 2455197.5) |
+| `forecast_time` | 2014-12-08T23:58:34Z | La misma fecha en UTC |
+| `status` | experimental | No es una medición ni una efeméride validada |
+
+**Cambiando solo `horizon_days`** (mismas observaciones): 0.5 → (40.404, 10.235) · 1 → (40.488, 10.238) ·
+2 → (40.762, 10.196) · 3 → (40.836, 10.174). El horizonte entra directo al modelo, no se itera.
+
+**Con fechas normales** en lugar de `epoch`: `{"time": "2016-03-01T12:00:00Z", "ra": 120.05, "dec": 20.02}`
+(la API convierte UTC → epoch Gaia).
+
+**Errores reales:**
+
+```json
+{"error":{"code":"bad_request","message":"Las observaciones deben venir ordenadas por fecha, con epochs estrictamente crecientes."}}
+{"error":{"code":"bad_request","message":"Se requieren exactamente 3 observaciones (llegaron 2)."}}
+{"error":{"code":"bad_request","message":"La separación entre observaciones consecutivas debe ser ≤ 3 días (rango del entrenamiento)."}}
+{"error":{"code":"bad_request","message":"horizon_days supera el máximo (3)"}}
+```
+
+**Para qué sirve en la app:** en el blink, el usuario marca un asteroide en 3 frames cercanos en el tiempo
+(o se cargan 3 observaciones de Gaia) y se dibuja un círculo punteado "predicción ML" donde la red cree que
+estará. Si el asteroide tiene nombre, al lado se dibuja la posición de `GET /api/predict` (JPL Horizons) para
+comparar la red con la efeméride real.
+
+> ⚠️ Posiciones **Gaia-céntricas**, sin incertidumbre, horizonte ≤ 3 días. No sirve para objetos que no sean
+> asteroides ni para estrellas (para eso: `GET /api/predict`).

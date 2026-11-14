@@ -297,6 +297,7 @@ cantidades `1` (RA/Dec astrométricas) y `36` (incertidumbre 3σ).
 | `/api/predict` | ✔ (fechas) | ✔ | | | | ✔ |
 | `/api/overlay` | | | | ✔ (gaia) | ✔ (wise) | |
 | `/api/jobs/{id}` | | | | | | |
+| `POST /api/asteroids/predict` (modelo ONNX local) | | | | | | |
 | `/api/status` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 
 ---
@@ -788,7 +789,8 @@ externa (como mucho cada 5 min).
     "gaia":     {"ok": true, "latency_ms": 979, "last_error": null},
     "wise":     {"ok": true, "latency_ms": 512, "last_error": null},
     "horizons": {"ok": true, "latency_ms": 566, "last_error": null}
-  }
+  },
+  "models": {"asteroid_lstm": {"loaded": true, "file": "asteroid_lstm.onnx", "error": null}}
 }
 ```
 
@@ -820,6 +822,39 @@ banderas nuevas funciona sin cambiar código).
 | `bloom`, `snowball`, `halo` | BLOOM… | Artefactos del detector | |
 
 "Se limpia" = el píxel se rellena con la media de sus vecinos antes de mostrar o restar (`CLEAN_BAD_PIXELS`).
+
+---
+
+### 5.15 `POST /api/asteroids/predict` — modelo ML de asteroides (experimental)
+
+**Para qué sirve:** pronosticar la posición de un asteroide a ≤ 3 días con una red LSTM exportada a ONNX,
+a partir de **3 observaciones** del mismo asteroide (huecos ≤ 3 días). **Sin API externa** (corre en el
+backend, CPU, ~25 ms). Es el único endpoint `POST`.
+
+```json
+// petición
+{"asteroid_id": 1,
+ "observations": [{"epoch": 1800.0, "ra": 40.0, "dec": 10.0},
+                  {"epoch": 1800.5, "ra": 40.1, "dec": 10.1},
+                  {"epoch": 1801.5, "ra": 40.3, "dec": 10.2}],
+ "horizon_days": 1.5}
+// respuesta real
+{"asteroid_id": 1, "predicted_ra_deg": 40.65200699257059, "predicted_dec_deg": 10.217896905462919,
+ "forecast_epoch": 1803.0, "forecast_time": "2014-12-08T23:58:34.254Z", "horizon_days": 1.5,
+ "status": "experimental", "frame": "ICRS, geometría Gaia-céntrica (la del entrenamiento)",
+ "time_scale": "epoch = días TCB desde JD 2455197.5 (Gaia)"}
+```
+
+| Campo | Qué es |
+|---|---|
+| `observations[].epoch` | Días TCB desde JD 2455197.5 (escala de Gaia SSO). **No** es Unix ni año |
+| `observations[].time` | Alternativa a `epoch`: fecha ISO UTC; la API la convierte |
+| `horizon_days` | 0 < h ≤ 3, días después de la última observación |
+| `predicted_ra_deg` / `predicted_dec_deg` | Posición pronosticada (ICRS, geometría Gaia) |
+| `forecast_epoch` / `forecast_time` | Fecha de la predicción (escala Gaia / ISO UTC) |
+
+Errores: 400 (no son 3, desordenadas, hueco > 3 días, horizonte fuera de rango…), 503 si el modelo no cargó.
+No sustituye a `GET /api/predict` (JPL Horizons). Todo el detalle: [`MODELO_ASTEROIDES.md`](MODELO_ASTEROIDES.md).
 
 ---
 

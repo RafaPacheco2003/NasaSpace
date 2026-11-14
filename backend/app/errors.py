@@ -17,6 +17,7 @@ STATUS_CODES = {
     429: "rate_limited",
     500: "internal_error",
     502: "upstream_error",
+    503: "model_unavailable",
     504: "upstream_timeout",
 }
 
@@ -67,8 +68,8 @@ def _validation_message(exc: RequestValidationError) -> str:
     if not errs:
         return "Parámetros inválidos."
     e = errs[0]
-    loc = [str(x) for x in e.get("loc", []) if x not in ("query", "path")]
-    name = loc[0] if loc else "parámetro"
+    loc = [str(x) for x in e.get("loc", []) if x not in ("query", "path", "body")]
+    name = ".".join(loc) if loc else "parámetro"
     etype = e.get("type", "")
     ctx = e.get("ctx") or {}
     if etype == "missing":
@@ -84,6 +85,8 @@ def _validation_message(exc: RequestValidationError) -> str:
         return f"{name} es menor que el mínimo ({fmt(ctx.get('ge'))})"
     if etype == "greater_than":
         return f"{name} debe ser mayor que {fmt(ctx.get('gt'))}"
+    if etype == "json_invalid":
+        return "El cuerpo de la petición no es JSON válido."
     if etype == "literal_error":
         return f"Valor no válido para '{name}'. Opciones: {ctx.get('expected')}."
     return f"Parámetro '{name}' inválido: {e.get('msg')}"

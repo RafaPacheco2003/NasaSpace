@@ -16,6 +16,8 @@ imágenes de la misión **SPHEREx** de la NASA (102 bandas infrarrojas, 0.75–5
    longitud de onda; ordenados por fecha sirven como **curva de luz**) con las **banderas de contaminación**.
 6. **Predice** dónde estará un objeto en cada fecha con imágenes (movimiento propio + paralaje para
    estrellas/enanas marrones, efemérides de JPL Horizons para asteroides y cometas).
+7. **Modelo ML experimental** (`POST /api/asteroids/predict`): una red LSTM exportada a ONNX pronostica la
+   posición de un asteroide a ≤ 3 días a partir de 3 observaciones tipo Gaia.
 
 El Frontend solo habla con esta API; la API habla con IRSA (SPHEREx, WISE), CDS (SIMBAD), NED, ESA (Gaia) y JPL.
 
@@ -24,6 +26,7 @@ El Frontend solo habla con esta API; la API habla con IRSA (SPHEREx, WISE), CDS 
 > · **Swagger**: <http://localhost:8000/docs> · **OpenAPI**: [`docs/openapi.yaml`](docs/openapi.yaml)
 > · **Probar todo**: `./scripts/probar_api.sh`
 > · **Ejemplos reales de cada servicio** (qué devuelve y para qué sirve): [`docs/EJEMPLOS_REALES.md`](docs/EJEMPLOS_REALES.md)
+> · **Modelo ML de asteroides (ONNX)**: [`docs/MODELO_ASTEROIDES.md`](docs/MODELO_ASTEROIDES.md)
 
 ---
 
@@ -170,17 +173,21 @@ sequenceDiagram
 
 ```
 NasaSpace/
+├── Dockerfile                     ← en la raíz (Render/Railway lo buscan aquí); copia backend/
+├── .dockerignore
 ├── docker-compose.yml
 ├── README.md                      ← este documento
 ├── docs/
 │   ├── DOCUMENTACION_API.md       ← APIs externas + referencia de cada endpoint
+│   ├── EJEMPLOS_REALES.md         ← cada servicio con respuesta real
+│   ├── MODELO_ASTEROIDES.md       ← integración del LSTM ONNX (POST /api/asteroids/predict)
 │   ├── openapi.json / openapi.yaml← especificación OpenAPI (Swagger) exportada
 ├── scripts/
 │   └── probar_api.sh              ← prueba todos los endpoints con curl + jq
 └── backend/
-    ├── Dockerfile
     ├── requirements.txt
     ├── .env.example
+    ├── models/                    ← asteroid_lstm.onnx + preprocessing.json (van dentro de la imagen)
     ├── app/
     │   ├── main.py                ← app FastAPI, CORS, middlewares, routers
     │   ├── config.py              ← variables de entorno y límites de validación
@@ -205,9 +212,10 @@ NasaSpace/
     │   │   └── horizons.py        ← efemérides de JPL Horizons
     │   ├── services/
     │   │   ├── imaging.py         ← secuencia y apilado/resta
-    │   │   └── analysis.py        ← espectro y predicción
+    │   │   ├── analysis.py        ← espectro y predicción
+    │   │   └── asteroid_forecast.py ← modelo LSTM ONNX: preprocesamiento + inferencia
     │   └── routers/               ← un archivo por grupo de endpoints del contrato
-    │       ├── catalogs.py  images.py  analysis.py  system.py  common.py
+    │       ├── catalogs.py  images.py  analysis.py  asteroids.py  system.py  common.py
     └── tests/                     ← pytest (sin red: modo mock + catálogos simulados)
 ```
 
@@ -215,7 +223,7 @@ NasaSpace/
 
 ## Endpoints
 
-Base: `http://localhost:8000`. Todos son `GET`. Listas en query: `?a=x&a=y` **o** `?a=x,y`.
+Base: `http://localhost:8000`. Todos son `GET` salvo el modelo ML (`POST /api/asteroids/predict`). Listas en query: `?a=x&a=y` **o** `?a=x,y`.
 
 | Endpoint | Tipo | Qué hace |
 |---|---|---|
@@ -241,6 +249,15 @@ Base: `http://localhost:8000`. Todos son `GET`. Listas en query: `?a=x&a=y` **o*
 - Campos adicionales en respuestas: `band_exact`, `obs_id`, `vmin/vmax` por frame, `partial`/`warnings` en
   secuencia y apilado, `catalog_epoch` y `catalog_ra/dec` en overlay, `object_type` en resolve,
   `n_exposures` en espectro, `parallax_mas`/`catalog_position` en predict.
+- **`POST /api/asteroids/predict`** — predicción **experimental** de la posición de un asteroide con el LSTM
+  ONNX (3 observaciones + `horizon_days` ≤ 3 → RA/Dec). Sin API externa, ~25 ms. Todo en
+  [`docs/MODELO_ASTEROIDES.md`](docs/MODELO_ASTEROIDES.md).
+  ```bash
+  curl -s -X POST http://localhost:8000/api/asteroids/predict -H 'Content-Type: application/json' \
+    -d '{"observations":[{"epoch":1800.0,"ra":40.0,"dec":10.0},{"epoch":1800.5,"ra":40.1,"dec":10.1},{"epoch":1801.5,"ra":40.3,"dec":10.2}],"horizon_days":1.5}'
+  # → {"predicted_ra_deg": 40.652007, "predicted_dec_deg": 10.217897, "forecast_epoch": 1803.0, "status": "experimental", ...}
+  ```
+- `/api/status` incluye `models.asteroid_lstm.loaded` (si el modelo cargó).
 - `/healthz` (healthcheck de Docker) y `/` → redirige a `/docs`.
 
 ### Ejemplos
@@ -534,6 +551,7 @@ Ver `backend/.env.example`. Las más importantes:
 | `JOB_TTL_S` | `3600` | Cuánto vive un trabajo terminado en memoria. |
 | `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_BURST` | `120` / `40` | Límite por IP. |
 | `TRUST_PROXY` | `false` | Usar `X-Forwarded-For` para la IP. |
+| `MODEL_DIR` | `backend/models` (`/app/models` en Docker) | Carpeta con `asteroid_lstm.onnx` + `preprocessing.json`. |
 | `SIMBAD_TAP_MIRROR` | espejo de Harvard | El reintento de SIMBAD va contra el espejo. |
 | `IRSA_GATOR_URL` | Gator de IRSA | Respaldo de WISE si el TAP de IRSA falla. |
 | URLs (`IRSA_SIA_URL`, `SIMBAD_TAP_URL`, `NED_TAP_URL`, `GAIA_TAP_URL`, `HORIZONS_URL`…) | servicios oficiales | Por si hay que usar un espejo. |
@@ -641,7 +659,9 @@ docker compose run --rm api pytest -q
 Cubren: forma de los errores y mensajes de validación, 404 de rutas y trabajos, CORS, la fórmula de geometría
 del contrato contra el WCS real, propagación del movimiento propio de Barnard, `resolve` con `current`,
 `objects` parcial (200 + `partial`) y total (504), frames/coverage, el flujo completo
-secuencia → PNG → caché 200 → resta → PNG, y el espectro.
+secuencia → PNG → caché 200 → resta → PNG, el espectro y el modelo ONNX de asteroides
+(`tests/test_asteroids.py`: 15 tests con la lista de aceptación de la guía, incluido que el endpoint da
+exactamente lo mismo que el código de referencia).
 
 ---
 
@@ -703,10 +723,15 @@ los reintentos, el espejo de SIMBAD, el respaldo Gator y las respuestas parciale
 La imagen es autocontenida (`python:3.12-slim`, usuario no root, healthcheck en `/healthz`):
 
 ```bash
-docker build -t spherex-sky-api ./backend
+docker build -t spherex-sky-api .        # desde la RAÍZ del repo
 docker run -d -p 8000:8000 -v sky-cache:/data/cache -e SPHEREX_MODE=irsa spherex-sky-api
 ```
 
 Sirve en cualquier plataforma de contenedores (Render, Railway, Fly.io, Cloud Run, una VM). Recomendaciones:
 un volumen persistente para `/data/cache`, 1–2 GB de RAM, y `TRUST_PROXY=true` si va detrás de un balanceador.
+
+**Render** (Web Service → Docker): no hay que configurar nada especial. Usa el `Dockerfile` de la raíz con
+contexto `.` y el puerto que Render pone en `$PORT` (la imagen lo respeta; en local es 8000).
+Variables útiles en *Environment*: `TRUST_PROXY=true`, `SPHEREX_MODE=irsa`. *Health Check Path*: `/healthz`.
+Sin disco persistente la caché se pierde en cada deploy (funciona igual, solo más lento la primera vez).
 # NasaSpace

@@ -32,8 +32,8 @@ info:
     | **JPL Horizons** | NASA JPL | predict (asteroides y cometas) |
 
 
-    **Reglas:** solo GET, sin autenticación, CORS abierto. Coordenadas en grados (ICRS/J2000);
-    radio, fov y apertura
+    **Reglas:** GET (salvo `POST /api/asteroids/predict`, el modelo ML), sin autenticación,
+    CORS abierto. Coordenadas en grados (ICRS/J2000); radio, fov y apertura
 
     en segundos de arco. Timeout 10 s por fuente externa con 1 reintento. Caché 24
     h (coordenadas redondeadas a 1″).
@@ -1380,6 +1380,74 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/asteroids/predict:
+    post:
+      tags:
+      - Asteroides (ML)
+      summary: Posición futura de un asteroide con el LSTM (EXPERIMENTAL)
+      description: '**Para qué sirve:** dadas **3 observaciones** del mismo asteroide
+        (huecos ≤ 3 días) y un horizonte
+
+        `horizon_days` (0 < h ≤ 3), estima dónde estará (RA/Dec) con una red LSTM
+        entrenada con
+
+        observaciones de **Gaia** y exportada a ONNX. Sin API externa; corre en CPU
+        en milisegundos.
+
+
+        **Tiempo:** `epoch` = días TCB desde JD 2455197.5 (columna `epoch` de Gaia
+        SSO), **no** Unix ni año.
+
+        Si prefieres fechas normales, manda `time` (ISO UTC) en lugar de `epoch` y
+        la API lo convierte.
+
+
+        **Límites:** geometría Gaia-céntrica (no es la posición vista desde la Tierra
+        ni desde SPHEREx),
+
+        sin incertidumbre calibrada y no validado fuera de 3 días. Para efemérides
+        de verdad usar
+
+        `GET /api/predict` (JPL Horizons). Validación fallida → **400** con la forma
+        de error del contrato.'
+      operationId: predict_asteroid_api_asteroids_predict_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsteroidForecastRequest'
+        required: true
+      responses:
+        '200':
+          description: Resultado (en caché si es un proceso lento)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsteroidForecastResult'
+        '400':
+          description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Demasiadas peticiones desde la misma IP (cabecera Retry-After)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Error interno
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: El modelo ONNX no está disponible (faltan archivos o no cargó)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/status:
     get:
       tags:
@@ -1402,6 +1470,135 @@ paths:
                 $ref: '#/components/schemas/StatusResult'
 components:
   schemas:
+    AsteroidForecastRequest:
+      properties:
+        asteroid_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Asteroid Id
+          description: Solo identificador; no entra al modelo
+        observations:
+          items:
+            $ref: '#/components/schemas/AsteroidObservation'
+          type: array
+          title: Observations
+          description: Exactamente 3, del mismo asteroide, ordenadas por fecha; huecos
+            ≤ 3 días
+        horizon_days:
+          type: number
+          maximum: 3.0
+          exclusiveMinimum: 0.0
+          title: Horizon Days
+          description: Días desde la última observación (0 < h ≤ 3)
+      type: object
+      required:
+      - observations
+      - horizon_days
+      title: AsteroidForecastRequest
+      example:
+        asteroid_id: 1
+        horizon_days: 1.5
+        observations:
+        - dec: 10.0
+          epoch: 1800.0
+          ra: 40.0
+        - dec: 10.1
+          epoch: 1800.5
+          ra: 40.1
+        - dec: 10.2
+          epoch: 1801.5
+          ra: 40.3
+    AsteroidForecastResult:
+      properties:
+        asteroid_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Asteroid Id
+        predicted_ra_deg:
+          type: number
+          title: Predicted Ra Deg
+        predicted_dec_deg:
+          type: number
+          title: Predicted Dec Deg
+        forecast_epoch:
+          type: number
+          title: Forecast Epoch
+          description: Epoch Gaia de la predicción = última epoch + horizon_days
+        forecast_time:
+          type: string
+          title: Forecast Time
+          description: La misma fecha en ISO UTC
+        horizon_days:
+          type: number
+          title: Horizon Days
+        status:
+          type: string
+          const: experimental
+          title: Status
+        frame:
+          type: string
+          title: Frame
+        time_scale:
+          type: string
+          title: Time Scale
+      type: object
+      required:
+      - predicted_ra_deg
+      - predicted_dec_deg
+      - forecast_epoch
+      - forecast_time
+      - horizon_days
+      - status
+      - frame
+      - time_scale
+      title: AsteroidForecastResult
+      example:
+        asteroid_id: 1
+        forecast_epoch: 1803.0
+        forecast_time: '2014-12-08T23:58:34.254Z'
+        frame: ICRS, geometría Gaia-céntrica (la del entrenamiento)
+        horizon_days: 1.5
+        predicted_dec_deg: 10.217897
+        predicted_ra_deg: 40.652007
+        status: experimental
+        time_scale: epoch = días TCB desde JD 2455197.5 (Gaia)
+    AsteroidObservation:
+      properties:
+        epoch:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Epoch
+          description: Días TCB desde JD 2455197.5 (columna `epoch` de Gaia SSO).
+            NO es Unix ni año.
+        time:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Time
+          description: 'Alternativa a epoch: fecha ISO 8601 UTC; la API la convierte
+            a epoch Gaia.'
+        ra:
+          type: number
+          exclusiveMaximum: 360.0
+          minimum: 0.0
+          title: Ra
+          description: Ascensión recta en grados (ICRS)
+        dec:
+          type: number
+          maximum: 90.0
+          minimum: -90.0
+          title: Dec
+          description: Declinación en grados (ICRS)
+      type: object
+      required:
+      - ra
+      - dec
+      title: AsteroidObservation
+      description: Una posición observada. Indicar `epoch` (escala Gaia) **o** `time`
+        (ISO UTC), no ambos.
     Center:
       properties:
         ra:
@@ -1748,6 +1945,25 @@ components:
         queue_position: 0
         stage: Descargando frames 3/6
         status: running
+    ModelStatus:
+      properties:
+        loaded:
+          type: boolean
+          title: Loaded
+        file:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: File
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - loaded
+      title: ModelStatus
     ObjectsResult:
       properties:
         partial:
@@ -2588,6 +2804,14 @@ components:
           type: object
           title: Sources
           description: spherex, simbad, ned, gaia, wise, horizons
+        models:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/ModelStatus'
+            type: object
+          - type: 'null'
+          title: Models
+          description: Modelos de ML locales (asteroid_lstm)
       type: object
       required:
       - status
@@ -2619,6 +2843,9 @@ tags:
 - name: Análisis
   description: Espectro, predicción de posiciones y overlays (IRSA, SIMBAD, Horizons,
     Gaia, WISE)
+- name: Asteroides (ML)
+  description: Predicción EXPERIMENTAL de posición con un LSTM (ONNX) a partir de
+    3 observaciones Gaia
 - name: Sistema
   description: Salud de la API y de las APIs externas
 servers:
@@ -2626,4 +2853,3 @@ servers:
   description: Este servidor
 - url: http://localhost:8000
   description: Local
-

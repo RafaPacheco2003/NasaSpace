@@ -1,6 +1,8 @@
 services:
   api:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: spherex-sky-api:0.3.0
     container_name: spherex-sky-api
     ports:
