@@ -66,11 +66,12 @@ async def build_sequence(job: Job, *, ra: float, dec: float, fov: float, size: i
                          date_from: date | None, date_to: date | None, stretch: str, cmap: str, scale: str,
                          limit: int, offset: int) -> dict:
     job.update(0.02, "Buscando frames de SPHEREx")
-    metas, _ = await sx.find_frames(ra, dec)
+    metas, _, search_warns = await sx.find_frames(ra, dec)
     sel = sx.filter_frames(metas, detector, date_from, date_to)
     total = len(sel)
     page = sel[offset: offset + limit]
     results, warns = await fetch_many(job, page, ra, dec, fov, size, 0.05, 0.92, "Descargando frames")
+    warns = search_warns + warns
     ok = [(m, r) for m, r in zip(page, results) if r is not None]
     if page and not ok:
         raise APIError(502, "upstream_error", f"No se pudo descargar ningún frame ({warns[0] if warns else 'sin detalle'}).")

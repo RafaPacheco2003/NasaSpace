@@ -150,3 +150,35 @@ def test_spectrum(client):
     wl = [p["wavelength"] for p in res["points"]]
     assert len(wl) > 10 and wl == sorted(wl) and 0.7 < wl[0] and wl[-1] < 5.1
     assert {"date_obs", "detector", "frame_id", "flags", "error"} <= res["points"][0].keys()
+
+
+def test_irsa_down_uses_local_index(client, monkeypatch):
+    """Si la búsqueda de IRSA cae (502), se usan las exposiciones conocidas que cubren el punto."""
+    from app import spherex as sx
+    from app.errors import UpstreamError
+
+    base = client.get("/api/frames", params={"ra": 200.0, "dec": 10.0}).json()
+    assert base["total"] > 0 and base["partial"] is False
+
+    async def down(ra, dec):
+        raise UpstreamError("spherex", "HTTP 502")
+    monkeypatch.setattr(sx.provider(), "search", down)
+
+    # Punto nuevo a 2′ del anterior: no está en caché → índice local
+    r = client.get("/api/frames", params={"ra": 200.03, "dec": 10.01})
+    body = r.json()
+    assert r.status_code == 200 and body["partial"] is True and body["total"] == base["total"]
+    assert "índice local" in body["warnings"][0]
+    # Punto lejano (fuera de toda huella conocida) → 502 con la forma del contrato
+    r = client.get("/api/frames", params={"ra": 10.0, "dec": -50.0})
+    assert r.status_code == 502 and r.json()["error"]["code"] == "upstream_error"
+
+
+def test_polygon_coverage():
+    from app.spherex import _covers
+    from app.spherex.base import FrameMeta
+
+    m = FrameMeta(id="x", obs_id="x", date_obs="2025-01-01T00:00:00Z", mjd=0, detector=1, band_um=1.0,
+                  exposure_s=1, access_url="u", center_ra=10, center_dec=0,
+                  extra={"s_region": "POLYGON ICRS 9 -1 11 -1 11 1 9 1"})
+    assert _covers(m, 10.5, 0.5) and not _covers(m, 11.5, 0.0)

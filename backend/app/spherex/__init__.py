@@ -14,9 +14,12 @@ from astropy.time import Time
 from astropy.wcs.utils import proj_plane_pixel_area
 
 from ..astro import target_wcs
-from ..cache import cached, cget, cset, key, r1, singleflight
+import re
+
+from ..cache import cached, cget, cset, get_cache, key, r1, singleflight
 from ..config import settings
-from ..errors import not_found
+from ..astro import gnomonic, separation_arcsec
+from ..errors import UpstreamError, not_found
 from .base import (
     NATIVE_PIXEL_ARCSEC,
     Cutout,
@@ -64,18 +67,109 @@ def get_registered(fid: str) -> FrameMeta | None:
     return FrameMeta(**d) if d else None
 
 
-async def find_frames(ra: float, dec: float) -> tuple[list[FrameMeta], bool]:
-    """Todas las exposiciones que cubren (ra, dec). Caché 24 h por punto redondeado a 1″."""
+# --- Índice local de huellas ---------------------------------------------------
+# Cada exposición encontrada se guarda con su huella en el cielo (s_region). Si la búsqueda de IRSA
+# cae (502), se responde con las exposiciones ya conocidas que cubren el punto (partial + aviso).
+
+INDEX_TTL = 30 * 24 * 3600
+INSCRIBED_DEG = 1.70     # radio del círculo inscrito en una exposición de SPHEREx (~3.5° de lado)
+CANDIDATE_DEG = 2.60     # media diagonal + margen
+_NUM = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
+def _search_key(rra: float, rdec: float) -> str:
+    return key("spherex_search", settings.spherex_mode, settings.spherex_collection, rra, rdec)
+
+
+def _index_key() -> str:
+    return key("spherex_index", settings.spherex_mode, settings.spherex_collection)
+
+
+def _update_index(metas: list[FrameMeta]) -> None:
+    idx = cget(_index_key()) or {}
+    new = {m.id: m.as_dict() for m in metas if m.id not in idx}
+    if new:
+        idx.update(new)
+        cset(_index_key(), idx, INDEX_TTL)
+
+
+def _load_index() -> dict:
+    idx = cget(_index_key())
+    if idx:
+        return idx
+    # Primera vez: reconstruir desde las búsquedas que ya están en caché
+    prefix = key("spherex_search", settings.spherex_mode, settings.spherex_collection)[:-1]
+    idx = {}
+    cache = get_cache()
+    for k in cache.iterkeys():
+        if isinstance(k, str) and k.startswith(prefix):
+            for d in cache.get(k) or []:
+                idx[d["id"]] = d
+    if idx:
+        cset(_index_key(), idx, INDEX_TTL)
+    return idx
+
+
+def _polygon(s_region: str) -> list[tuple[float, float]]:
+    nums = [float(x) for x in _NUM.findall(s_region or "")]
+    return list(zip(nums[0::2], nums[1::2])) if len(nums) >= 6 and len(nums) % 2 == 0 else []
+
+
+def _covers(m: FrameMeta, ra: float, dec: float) -> bool:
+    poly = _polygon((m.extra or {}).get("s_region", ""))
+    if len(poly) >= 3:
+        xs, ys = gnomonic([p[0] for p in poly], [p[1] for p in poly], ra, dec)
+        inside = False
+        n = len(poly)
+        for i in range(n):  # ray casting del origen (el punto pedido) en el plano tangente
+            x1, y1, x2, y2 = xs[i], ys[i], xs[(i + 1) % n], ys[(i + 1) % n]
+            if (y1 > 0) != (y2 > 0) and 0 < x1 + (0 - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+        return inside
+    if m.center_ra is None or m.center_dec is None:
+        return False
+    return separation_arcsec(ra, dec, m.center_ra, m.center_dec) <= INSCRIBED_DEG * 3600
+
+
+def local_lookup(ra: float, dec: float) -> list[FrameMeta]:
+    out = []
+    for d in _load_index().values():
+        m = FrameMeta(**d)
+        if m.center_ra is None or separation_arcsec(ra, dec, m.center_ra, m.center_dec) > CANDIDATE_DEG * 3600:
+            continue
+        if _covers(m, ra, dec):
+            out.append(m)
+    return sorted(out, key=lambda m: m.mjd)
+
+
+async def find_frames(ra: float, dec: float) -> tuple[list[FrameMeta], bool, list[str]]:
+    """Todas las exposiciones que cubren (ra, dec). Caché 24 h por punto redondeado a 1″.
+
+    Devuelve (frames, hit_de_caché, avisos). Si IRSA no responde pero el índice local conoce
+    exposiciones que cubren el punto, las devuelve con un aviso en lugar de fallar.
+    """
     rra, rdec = r1(ra), r1(dec)
 
     async def fetch():
         metas = await provider().search(rra, rdec)
         return [m.as_dict() for m in metas]
 
-    raw, hit = await cached(key("spherex_search", settings.spherex_mode, settings.spherex_collection, rra, rdec), fetch)
+    try:
+        raw, hit = await cached(_search_key(rra, rdec), fetch)
+    except UpstreamError as e:
+        fallback = await asyncio.to_thread(local_lookup, rra, rdec)
+        if not fallback:
+            raise
+        register(fallback)
+        return fallback, False, [
+            f"spherex: {e.message}. IRSA no responde; se usan {len(fallback)} exposiciones del índice local "
+            "(búsquedas anteriores cercanas). La lista puede estar incompleta."
+        ]
     metas = [FrameMeta(**d) for d in raw]
     register(metas)
-    return metas, hit
+    if not hit:
+        _update_index(metas)
+    return metas, hit, []
 
 
 def filter_frames(metas: list[FrameMeta], detector: int | None, date_from: date | None, date_to: date | None) -> list[FrameMeta]:

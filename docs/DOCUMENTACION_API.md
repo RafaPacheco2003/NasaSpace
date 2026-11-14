@@ -169,6 +169,12 @@ Devuelve una tabla VOTable (una fila por exposición y detector). Columnas que u
 | `s_ra` / `s_dec` | `134.41` / `-9.02` | `center` de la exposición |
 | `dataproduct_type` / `obs_collection` | `image` / `spherex_dr1` | Descartar los cubos (`spherex_dr1_cube`) |
 
+> **Si el buscador de IRSA cae** (502, frecuente): se reintenta 2 veces con espera creciente y, si sigue
+> caído, se usa el **índice local de huellas**: las exposiciones ya conocidas cuya huella (`s_region`) contiene
+> el punto. La respuesta lleva `partial: true` y el aviso
+> `IRSA no responde; se usan N exposiciones del índice local…`. Solo se devuelve 502 si no hay ninguna
+> exposición conocida cerca. El servicio de recortes es otro servidor de IRSA y suele seguir funcionando.
+
 **Paso 2 — Descargar un recorte** del FITS alrededor del objetivo:
 
 ```

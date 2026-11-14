@@ -44,6 +44,8 @@ class Settings:
     # Rellenar píxeles defectuosos (rayos cósmicos, calientes, NaN…) con la media de sus vecinos buenos
     clean_bad_pixels: bool = _bool("CLEAN_BAD_PIXELS", True)
     spherex_search_timeout_s: float = _float("SPHEREX_SEARCH_TIMEOUT_S", 20)
+    # IRSA devuelve 502 intermitentes: más reintentos (con espera creciente) para la búsqueda de frames
+    spherex_search_retries: int = _int("SPHEREX_SEARCH_RETRIES", 2)
     download_timeout_s: float = _float("DOWNLOAD_TIMEOUT_S", 60)
     download_concurrency: int = _int("DOWNLOAD_CONCURRENCY", 6)
     max_spectrum_frames: int = _int("MAX_SPECTRUM_FRAMES", 600)

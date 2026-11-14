@@ -21,9 +21,9 @@ MAX_PREDICT_POINTS = 500
 
 async def build_spectrum(job: Job, *, ra: float, dec: float, aperture: float, date_from: date | None, date_to: date | None) -> dict:
     job.update(0.02, "Buscando exposiciones")
-    metas, _ = await sx.find_frames(ra, dec)
+    metas, _, search_warns = await sx.find_frames(ra, dec)
     sel = sx.filter_frames(metas, None, date_from, date_to)
-    warns: list[str] = []
+    warns: list[str] = list(search_warns)
     if len(sel) > settings.max_spectrum_frames:
         warns.append(f"Se usaron {settings.max_spectrum_frames} de {len(sel)} exposiciones (límite MAX_SPECTRUM_FRAMES).")
         idx = np.linspace(0, len(sel) - 1, settings.max_spectrum_frames).round().astype(int)
@@ -57,7 +57,7 @@ async def build_spectrum(job: Job, *, ra: float, dec: float, aperture: float, da
         "flux_unit": "uJy",
         "points": points,
         "n_exposures": n,
-        "partial": failures > 0,
+        "partial": failures > 0 or bool(search_warns),
         "warnings": warns,
         "cache": "miss",
     }
@@ -67,7 +67,8 @@ async def _frame_times(ra: float, dec: float, date_from: date, date_to: date, wa
     """Fechas con imágenes de SPHEREx en el rango; si no hay (o falla IRSA), una por semana."""
     times: list[str] = []
     try:
-        metas, _ = await sx.find_frames(ra, dec)
+        metas, _, search_warns = await sx.find_frames(ra, dec)
+        warns.extend(search_warns)
         sel = sx.filter_frames(metas, None, date_from, date_to)
         seen = set()
         for m in sel:

@@ -44,7 +44,7 @@ async def frames(
     **API externa:** IRSA SIA v2 (`COLLECTION=spherex_dr1`)."""
     check_dates(date_from, date_to)
     rra, rdec = r1(ra), r1(dec)
-    metas, hit = await sx.find_frames(rra, rdec)
+    metas, hit, warns = await sx.find_frames(rra, rdec)
     sel = sx.filter_frames(metas, detector, date_from, date_to)
     page = sel[offset: offset + limit]
     return json_response({
@@ -54,8 +54,8 @@ async def frames(
         "limit": limit,
         "offset": offset,
         "frames": [m.api(sx.frame_info(m.id, rra, rdec)) for m in page],
-        "partial": False,
-        "warnings": [],
+        "partial": bool(warns),
+        "warnings": warns,
         "cache": "hit" if hit else "miss",
     })
 
@@ -193,7 +193,7 @@ async def coverage(ra: float = RA, dec: float = DEC, detector: int | None = DETE
 
     **API externa:** IRSA SIA v2."""
     rra, rdec = r1(ra), r1(dec)
-    metas, hit = await sx.find_frames(rra, rdec)
+    metas, hit, warns = await sx.find_frames(rra, rdec)
     sel = sx.filter_frames(metas, detector, None, None)
     days = [date.fromisoformat(m.date_obs[:10]) for m in sel]
     weeks = Counter(week_start(d) for d in days)
@@ -203,5 +203,7 @@ async def coverage(ra: float = RA, dec: float = DEC, detector: int | None = DETE
         "last_date": max(days).isoformat() if days else None,
         "weeks": [{"week_start": w.isoformat(), "count": c} for w, c in sorted(weeks.items())],
         "total": len(sel),
+        "partial": bool(warns),
+        "warnings": warns,
         "cache": "hit" if hit else "miss",
     })

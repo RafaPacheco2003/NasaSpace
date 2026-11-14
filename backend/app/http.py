@@ -97,7 +97,7 @@ async def request(
             last = UpstreamError(source, f"{type(e).__name__}: {e}"[:300])
         if attempt < retries:
             log.info("Reintentando %s (%s)", source, last.message if last else "")
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.4 * 2**attempt)  # 0.4 s, 0.8 s, 1.6 s…
     assert last is not None
     health.record(source, False, error=last.message)
     raise last

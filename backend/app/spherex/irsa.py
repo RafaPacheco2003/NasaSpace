@@ -35,7 +35,8 @@ async def search(ra: float, dec: float) -> list[FrameMeta]:
     for coll in settings.spherex_collection.split(","):
         if coll.strip():
             params.append(("COLLECTION", coll.strip()))
-    r = await request(SOURCE, "GET", settings.irsa_sia_url, params=params, timeout=settings.spherex_search_timeout_s)
+    r = await request(SOURCE, "GET", settings.irsa_sia_url, params=params, timeout=settings.spherex_search_timeout_s,
+                      retries=settings.spherex_search_retries)
     table = parse_votable(SOURCE, r.content)
     frames: dict[str, FrameMeta] = {}
     for row in table:
@@ -74,6 +75,7 @@ async def search(ra: float, dec: float) -> list[FrameMeta]:
             access_url=str(url),
             center_ra=fnum(val(row, "s_ra")),
             center_dec=fnum(val(row, "s_dec")),
+            extra={"s_region": str(val(row, "s_region") or "")},  # huella en el cielo (índice local)
         )
     return sorted(frames.values(), key=lambda f: f.mjd)
 

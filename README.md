@@ -492,6 +492,10 @@ Todos los errores tienen la misma forma:
   a `at` se hace en cada petición).
 - El registro de ids de frame (`id → URL del FITS`) dura 30 días; si un id no está, se vuelve a buscar en el
   `ra/dec` de la petición, así las `png_url` siguen funcionando aunque la caché se haya limpiado.
+- **Índice local de huellas**: cada exposición encontrada se guarda (30 días) con su huella en el cielo
+  (`s_region`). Si la búsqueda de IRSA cae (502), la API calcula qué exposiciones conocidas cubren el punto
+  pedido y responde `200` con `partial: true` y un aviso, en lugar de fallar. Solo da 502 si no conoce
+  ninguna exposición de esa zona. (Los recortes FITS usan otro servicio de IRSA que suele seguir funcionando.)
 - *Singleflight*: si dos peticiones necesitan el mismo recorte a la vez, se descarga una sola vez.
 - Las respuestas con campo `cache` dicen `hit` o `miss`. Los PNG llevan `Cache-Control: public, max-age=86400`.
 
@@ -519,6 +523,7 @@ Ver `backend/.env.example`. Las más importantes:
 | `CLEAN_BAD_PIXELS` | `true` | Rellenar rayos cósmicos, píxeles calientes/fríos, NaN… con sus vecinos. |
 | `EXTERNAL_TIMEOUT_S` / `EXTERNAL_RETRIES` | `10` / `1` | Tiempo máximo y reintentos por fuente. |
 | `SPHEREX_SEARCH_TIMEOUT_S` | `20` | Timeout de la búsqueda SIA. |
+| `SPHEREX_SEARCH_RETRIES` | `2` | Reintentos de la búsqueda SIA, con espera creciente (0.4 s, 0.8 s). |
 | `DOWNLOAD_TIMEOUT_S` | `60` | Timeout de descarga de recortes FITS. |
 | `DOWNLOAD_CONCURRENCY` | `6` | Descargas simultáneas a IRSA. |
 | `MAX_CONCURRENT_JOBS` | `2` | Trabajos lentos simultáneos (el resto en cola). |
