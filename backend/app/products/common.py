@@ -35,7 +35,13 @@ def to_png(norm: np.ndarray, valid: np.ndarray, cmap: str, size: int | None, inv
     """
     from matplotlib import colormaps
 
-    rgba = (colormaps[cmap](norm) * 255).round().astype(np.uint8)
+    # Por bloques de filas: colormaps() devuelve RGBA float64 (32 B/píxel) y un L2 de 2040² tiene 4.2 M píxeles;
+    # de una vez serían ~400 MB de temporales (en Render, con 512 MB, el servicio se caía). Resultado idéntico.
+    cm = colormaps[cmap]
+    rgba = np.empty(norm.shape + (4,), dtype=np.uint8)
+    step = 128
+    for i in range(0, norm.shape[0], step):
+        rgba[i:i + step] = (cm(norm[i:i + step]) * 255).round().astype(np.uint8)
     if invalid == "black":
         rgba[~valid, :3] = 0
     elif invalid == "transparent":

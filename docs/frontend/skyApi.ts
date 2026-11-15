@@ -16,7 +16,7 @@ const env: Record<string, string | undefined> =
   (typeof (globalThis as any).process !== "undefined" ? (globalThis as any).process.env : {}) || {};
 
 export const API_BASE: string = (
-  env.VITE_API_URL || env.NEXT_PUBLIC_API_URL || env.REACT_APP_API_URL || "http://localhost:8000"
+  env.PUBLIC_API_URL || env.VITE_API_URL || env.NEXT_PUBLIC_API_URL || env.REACT_APP_API_URL || "http://localhost:8000"
 ).replace(/\/+$/, "");
 
 /** Convierte una ruta relativa que devuelve la API ("/api/frame/...png") en URL absoluta para <img src>. */
