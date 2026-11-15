@@ -1277,6 +1277,123 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/composition:
+    get:
+      tags:
+      - Análisis
+      summary: Composición estimada (hielos, moléculas, minerales) en una coordenada
+        (lento → 202 + trabajo)
+      description: "**Para qué sirve:** el usuario elige un punto en el mapa y obtiene\
+        \ qué compuestos hay ahí y en qué cantidad\naproximada, a partir del espectro\
+        \ SPHEREx de 0.75–5 µm (102 bandas):\n\n- **Hielos** (H₂O, CO₂, CO, CH₃OH):\
+        \ densidad de columna (moléculas/cm²), % respecto al agua y átomos H/C/O.\n\
+        - **Moléculas en gas** (H₂O vapor, CH₄, CO), **PAH / orgánicos**, **hidrógeno\
+        \ ionizado** (Paβ, Paα, Brγ, Brα)\n  y **minerales** (silicatos con Fe, piroxeno,\
+        \ hidratados): profundidad de banda como indicador relativo.\n- Qué **elementos**\
+        \ respalda cada banda detectada.\n\nUsa el mismo espectro que `/api/spectrum`\
+        \ (si ya se pidió, solo tarda el análisis).\n\n**APIs externas:** IRSA (espectro)\
+        \ y SIMBAD (tipo de objeto, para interpretar)."
+      operationId: composition_api_composition_get
+      parameters:
+      - name: ra
+        in: query
+        required: true
+        schema:
+          type: number
+          minimum: 0
+          exclusiveMaximum: 360
+          description: Ascensión recta en grados (ICRS/J2000).
+          examples:
+          - 133.795129
+          title: Ra
+        description: Ascensión recta en grados (ICRS/J2000).
+      - name: dec
+        in: query
+        required: true
+        schema:
+          type: number
+          maximum: 90
+          minimum: -90
+          description: Declinación en grados (ICRS/J2000).
+          examples:
+          - -7.245147
+          title: Dec
+        description: Declinación en grados (ICRS/J2000).
+      - name: aperture
+        in: query
+        required: false
+        schema:
+          type: number
+          maximum: 60
+          minimum: 1
+          description: Radio de la apertura en segundos de arco.
+          default: 6
+          title: Aperture
+        description: Radio de la apertura en segundos de arco.
+      - name: date_from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Date From
+      - name: date_to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Date To
+      - name: context
+        in: query
+        required: false
+        schema:
+          enum:
+          - auto
+          - brown_dwarf
+          - yso
+          - cloud
+          - hii
+          - pn
+          - galaxy
+          - star
+          - solar_system
+          - unknown
+          type: string
+          description: Tipo de objeto para interpretar las bandas. auto = el de SIMBAD
+            en esa posición; solar_system para asteroides/cometas.
+          default: auto
+          title: Context
+        description: Tipo de objeto para interpretar las bandas. auto = el de SIMBAD
+          en esa posición; solar_system para asteroides/cometas.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '202':
+          description: Trabajo creado o en curso; consultar /api/jobs/{id}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Demasiadas peticiones desde la misma IP (cabecera Retry-After)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/overlay:
     get:
       tags:

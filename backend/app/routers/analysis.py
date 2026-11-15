@@ -14,6 +14,8 @@ from ..config import MAX_APERTURE, MIN_APERTURE, settings
 from ..errors import bad_request, not_found
 from ..jobs import jobs
 from ..services.analysis import build_predict, build_spectrum
+from ..services.composition import CONTEXTS, build_composition
+from ..jobs import job_id
 from ..sources import overlay as ov
 from ..utils import check_dates, date_iso, json_response
 from ..schemas import Job as JobSchema
@@ -80,6 +82,40 @@ async def spectrum(
     jp = {**p, "date_from": date_iso(date_from), "date_to": date_iso(date_to), "mode": settings.spherex_mode,
           "zodi": settings.zodi_subtract}
     return run_or_job("spectrum", "spc", jp, lambda job: build_spectrum(job, **p))
+
+
+@router.get("/composition", tags=["Análisis"],
+            summary="Composición estimada (hielos, moléculas, minerales) en una coordenada (lento → 202 + trabajo)",
+            responses=responses(None, 400, 429, job=True))
+async def composition(
+    ra: float = RA,
+    dec: float = DEC,
+    aperture: float = Query(6, ge=MIN_APERTURE, le=MAX_APERTURE, description="Radio de la apertura en segundos de arco."),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    context: Literal["auto", *CONTEXTS] = Query(  # type: ignore[valid-type]
+        "auto", description="Tipo de objeto para interpretar las bandas. auto = el de SIMBAD en esa posición; "
+                            "solar_system para asteroides/cometas."),
+):
+    """**Para qué sirve:** el usuario elige un punto en el mapa y obtiene qué compuestos hay ahí y en qué cantidad
+    aproximada, a partir del espectro SPHEREx de 0.75–5 µm (102 bandas):
+
+    - **Hielos** (H₂O, CO₂, CO, CH₃OH): densidad de columna (moléculas/cm²), % respecto al agua y átomos H/C/O.
+    - **Moléculas en gas** (H₂O vapor, CH₄, CO), **PAH / orgánicos**, **hidrógeno ionizado** (Paβ, Paα, Brγ, Brα)
+      y **minerales** (silicatos con Fe, piroxeno, hidratados): profundidad de banda como indicador relativo.
+    - Qué **elementos** respalda cada banda detectada.
+
+    Usa el mismo espectro que `/api/spectrum` (si ya se pidió, solo tarda el análisis).
+
+    **APIs externas:** IRSA (espectro) y SIMBAD (tipo de objeto, para interpretar)."""
+    check_dates(date_from, date_to)
+    p = dict(ra=r1(ra), dec=r1(dec), aperture=float(aperture), date_from=date_from, date_to=date_to)
+    spc = {**p, "date_from": date_iso(date_from), "date_to": date_iso(date_to), "mode": settings.spherex_mode,
+           "zodi": settings.zodi_subtract}
+    spectrum_jid = job_id("spc", spc)                      # misma clave que /api/spectrum
+    jp = {**spc, "context": context, "v": 4}
+    return run_or_job("composition", "cmp", jp, lambda job: build_composition(
+        job, **p, context=context, spectrum_jid=spectrum_jid))
 
 
 @router.get("/overlay", tags=["Análisis"], summary="Fuentes de Gaia o WISE para dibujar sobre la imagen",

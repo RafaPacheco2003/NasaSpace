@@ -29,7 +29,7 @@ log = logging.getLogger("skyapi.jobs")
 
 HEAVY_KINDS = {"cube", "l2"}
 
-PREFIX_KIND = {"seq": "sequence", "stk": "stack", "prd": "predict", "spc": "spectrum", "l2p": "l2", "cub": "cube"}
+PREFIX_KIND = {"seq": "sequence", "stk": "stack", "prd": "predict", "spc": "spectrum", "l2p": "l2", "cub": "cube", "cmp": "composition"}
 
 
 def job_id(prefix: str, params: dict) -> str:

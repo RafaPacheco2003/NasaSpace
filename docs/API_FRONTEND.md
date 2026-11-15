@@ -93,7 +93,7 @@ Muchos endpoints traen `"partial": true` y `"warnings": [...]` cuando una parte 
 
 Estos endpoints descargan FITS reales de la NASA y pueden tardar de segundos a minutos la primera vez:
 
-`/api/sequence` · `/api/stack` · `/api/spectrum` · `/api/predict` · `/api/l2` · `/api/cube`
+`/api/sequence` · `/api/stack` · `/api/spectrum` · `/api/composition` · `/api/predict` · `/api/l2` · `/api/cube`
 
 **Flujo:**
 
@@ -107,8 +107,8 @@ GET /api/jobs/{id}  (cada poll_after_ms) ──► status: queued → running �
 
 URL: `https://nasaspace-1ebj.onrender.com/api/jobs/seq_37d1ae94c942`
 
-`job_id` cumple `^[a-z0-9]{3}_[0-9a-f]{6,40}$` (prefijos: `seq` sequence, `stk` stack, `spc` spectrum, `prd`
-predict, `l2p` l2, `cub` cube).
+`job_id` cumple `^[a-z0-9]{3}_[0-9a-f]{6,40}$` (prefijos: `seq` sequence, `stk` stack, `spc` spectrum, `cmp`
+composition, `prd` predict, `l2p` l2, `cub` cube).
 
 Respuesta (también es el cuerpo del 202 inicial):
 
@@ -555,6 +555,133 @@ Respuesta (estrella con movimiento propio):
 - `positions[]` = una posición por cada fecha con imagen: dibujar un círculo de radio `sigma_arcsec` sobre el frame
   con la misma `date`.
 
+### 5.3 `GET /api/composition` — qué compuestos hay en un punto y en qué cantidad (LENTO → 202)
+
+URL: `https://nasaspace-1ebj.onrender.com/api/composition?ra=354.05882932&dec=2.15506703&aperture=8`
+
+El usuario elige un punto en el mapa (clic → `sequencePixelToSky`) y el backend analiza el espectro SPHEREx de
+0.75–5 µm en ese punto. Mide **18 bandas conocidas** de hielos, moléculas, minerales e hidrógeno ionizado y devuelve:
+
+- **qué se detecta** (con significancia en σ),
+- **cuánto**: para los **hielos**, la densidad de columna en moléculas/cm², el % respecto al agua y los átomos H/C/O que contienen;
+  para el resto, la profundidad de la banda (%) como **indicador relativo**,
+- **qué elementos** respalda cada banda,
+- un **resumen en español** listo para mostrar.
+
+Usa el mismo espectro que `/api/spectrum`: si ya se pidió el espectro de ese punto, solo tarda el análisis (~1 s).
+La primera vez tarda como un espectro (1–15 min según IRSA).
+
+| Parámetro | Tipo | Obligatorio | Default | Descripción |
+|---|---|---|---|---|
+| `ra`, `dec` | número | ✔ | | El punto elegido |
+| `aperture` | ″, 1…60 | | 6 | Radio de la apertura. Fuente puntual: 6; galaxia/nebulosa: 8–15 |
+| `date_from`, `date_to` | YYYY-MM-DD | | todo | Acotar fechas (útil si el objeto se mueve) |
+| `context` | `auto` `brown_dwarf` `yso` `cloud` `hii` `pn` `galaxy` `star` `solar_system` `unknown` | | `auto` | Tipo de objeto para interpretar las bandas. `auto` = el de SIMBAD en ese punto o, si no hay, deducido del espectro. Para asteroides/cometas mandar `solar_system` |
+
+Cliente: `api.composition({ ra, dec, aperture: 8 }, (p, stage) => barra(p, stage), signal)`.
+
+Respuesta real (galaxia con brote estelar NGC 7714; listas recortadas):
+
+```json
+{
+  "center": { "ra": 354.0588888888889, "dec": 2.155 },
+  "aperture_arcsec": 8.0,
+  "simbad_match": { "name": "NGC  7714", "otype": "AGN", "distance_arcsec": 0.228 },
+  "n_exposures": 226,
+  "spectrum_url": "/api/spectrum?ra=354.0588888888889&dec=2.155&aperture=8.0",
+  "context": { "type": "galaxy", "label": "galaxia", "source": "simbad" },
+  "summary": "Detectado: Monóxido de carbono gaseoso (4.6 µm) en absorción (22σ, 18%) → CO gaseoso (supergigantes rojas y gas de la galaxia); Hidrógeno ionizado Brackett α (4.05 µm) en emisión (16σ, 32%) → H II (Brα); Hidrógeno ionizado Paschen α (1.875 µm) en emisión (11σ, 23%) → H II (Paα); Metano / CO (2.2–2.45 µm) en absorción (6σ, 10%) → CO bandhead 2.29 µm (estrellas frías); Hielo de agua (H₂O) en absorción (5σ, 4%) → H₂O sólido (hielo). Columna de hielo de agua ≈ 1.5e+16 moléculas/cm². Contexto SIMBAD: galaxia.",
+  "detected": ["co_gas_4_6", "br_alpha", "pa_alpha", "ch4_2_3", "h2o_ice"],
+  "tentative": ["pah_3_3", "aliphatic_3_4"],
+  "attributed_to_other": ["hydrated_2_7um"],
+  "ices": [
+    { "formula": "H2O", "name": "Hielo de agua (H₂O)", "column_density_cm-2": 1.476e+16, "relative_to_h2o_percent": 100.0 }
+  ],
+  "elements_in_ices": [
+    { "element": "H", "column_density_cm-2": 2.952e+16, "fraction_percent": 66.7 },
+    { "element": "O", "column_density_cm-2": 1.476e+16, "fraction_percent": 33.3 }
+  ],
+  "elements_supported": [
+    { "element": "C", "evidence": ["Monóxido de carbono gaseoso (4.6 µm)", "Metano / CO (2.2–2.45 µm)"], "quantified": false },
+    { "element": "H", "evidence": ["Hidrógeno ionizado Brackett α (4.05 µm)", "Hidrógeno ionizado Paschen α (1.875 µm)", "…"], "quantified": true },
+    { "element": "O", "evidence": ["Monóxido de carbono gaseoso (4.6 µm)", "Hielo de agua (H₂O)", "…"], "quantified": true }
+  ],
+  "indicators": [
+    { "id": "co_gas_4_6", "name": "Monóxido de carbono gaseoso (4.6 µm)", "kind": "absorption", "depth_percent": 18.1,
+      "significance_sigma": 22.46, "carriers": ["CO gaseoso (supergigantes rojas y gas de la galaxia)"] },
+    { "id": "br_alpha", "name": "Hidrógeno ionizado Brackett α (4.05 µm)", "kind": "emission", "depth_percent": -31.56,
+      "significance_sigma": 15.96, "carriers": ["H II (Brα)"] },
+    "…"
+  ],
+  "features": [
+    { "id": "br_alpha", "name": "Hidrógeno ionizado Brackett α (4.05 µm)", "group": "emission_line", "center_um": 4.052,
+      "band_um": [4.025, 4.08], "status": "detected", "kind": "emission", "significance_sigma": 15.96,
+      "depth_percent": -31.56, "depth_error_percent": 1.98, "equivalent_width_um": -0.02269, "continuum_snr": 80.8,
+      "channels_in_band": 3, "carriers": ["H II (Brα)"], "elements": ["H"], "line_flux_W_m2": 9.348e-17,
+      "expected_in_context": true },
+    { "id": "h2o_ice", "name": "Hielo de agua (H₂O)", "group": "ice", "center_um": 3.05, "band_um": [2.88, 3.3],
+      "status": "detected", "kind": "absorption", "significance_sigma": 5.42, "depth_percent": 4.37,
+      "depth_error_percent": 0.81, "carriers": ["H₂O sólido (hielo)", "minerales hidratados (OH/H₂O) en superficies"],
+      "elements": ["H", "O"],
+      "ice": { "formula": "H2O", "peak_optical_depth": 0.1879, "integrated_optical_depth_cm-1": 2.951,
+               "band_strength_cm_per_molecule": 2e-16, "column_density_cm-2": 1.476e+16,
+               "column_density_error_cm-2": 2.725e+15 } },
+    { "id": "hydrated_2_7um", "name": "Minerales hidratados (OH, 2.7 µm)", "group": "mineral", "status": "attributed_to_other",
+      "reason": "Rasgo presente pero no físico en un objeto de tipo «galaxia»: probablemente es parte de otra banda vecina.", "…": "…" },
+    { "id": "ch3oh_ice", "name": "Hielo de metanol (CH₃OH)", "status": "not_detected", "significance_sigma": 1.83,
+      "upper_limit_depth_percent": 16.41, "…": "…" },
+    "… (18 en total)"
+  ],
+  "spectrum_binned": [
+    { "wavelength_um": 0.7442, "flux_uJy": 19374.88, "error_uJy": 422.39, "n": 1 },
+    "…"
+  ],
+  "quality": { "level": "good", "median_snr_per_channel": 45.8, "channels": 147, "features_measurable": 18,
+               "reduced_chi2": 35.44, "input_points": 202, "used_points": 195, "flagged_points_removed": 7,
+               "saturated_fraction": 0.0 },
+  "method": "Bandas medidas contra un continuo lineal local; detección ≥ 3σ. Hielos: N = ∫τ dν / A …",
+  "limitations": ["SPHEREx tiene baja resolución (R≈40 hasta 3.8 µm): bandas vecinas pueden mezclarse.", "…"],
+  "warnings": ["Dispersión entre exposiciones 35.4× mayor que el error: …"],
+  "partial": true
+}
+```
+
+**Campos clave para la UI:**
+
+| Campo | Mostrar como |
+|---|---|
+| `summary` | Texto principal del panel |
+| `context.label` (+ `context.source`: `simbad` / `spectrum` / `user` / `none`) | "Tipo de objeto: galaxia (SIMBAD)" |
+| `ices[]` | Tabla "Hielos": fórmula, `column_density_cm-2` (moléculas/cm², notación científica), `relative_to_h2o_percent` |
+| `elements_in_ices[]` | Gráfico de barras/pastel de átomos en los hielos (`fraction_percent`) |
+| `elements_supported[]` | Chips de elementos (H, C, O, Fe, Mg, Si…); `quantified: true` = tiene cantidad en `elements_in_ices` |
+| `indicators[]` | Lista de moléculas/minerales/líneas con barra de `|depth_percent|` y `significance_sigma` |
+| `features[]` | Detalle de las 18 bandas. `status`: `detected` (≥ 3σ) · `tentative` (2–3σ o datos de baja calidad) · `not_detected` (trae `upper_limit_depth_percent`) · `attributed_to_other` (rasgo no físico en ese tipo de objeto; trae `reason`) · `no_coverage` / `continuum_too_faint` |
+| `spectrum_binned[]` | Gráfico del espectro (λ µm vs µJy) con las bandas `features[].band_um` sombreadas: verde detectada, gris no detectada |
+| `quality.level` | `good` / `fair` / `poor`. Con `poor` mostrar aviso: "Datos insuficientes o saturados" |
+| `warnings[]`, `limitations[]` | Avisos en letra pequeña |
+
+**Cómo leer las cantidades:**
+
+- Hielos: `column_density_cm-2` = moléculas por cm² a lo largo de la línea de visión (p. ej. `1.5e+16`). Es la
+  magnitud estándar en astronomía; no es una masa ni un porcentaje del objeto.
+- `relative_to_h2o_percent` = abundancia respecto al hielo de agua (en nubes típicas: CO₂ ≈ 15–35 %, CO ≈ 5–40 %).
+- Minerales, gases y líneas: `depth_percent` = cuánto baja (o sube, negativo = emisión) el espectro respecto al continuo.
+  Más profundo = más abundante, pero **no** se puede convertir en masa.
+- La composición elemental total (% de Fe, Si…) **no** es medible con SPHEREx; solo se indica qué elementos respalda cada banda.
+
+**Verificación con objetos reales (backend local, datos SPHEREx DR1):**
+
+| Objeto | Literatura | Resultado |
+|---|---|---|
+| Enana marrón T4.5 (2MASS J0559−1404) | H₂O, CH₄, CO en la atmósfera | Contexto deducido del espectro: enana marrón · H₂O 1.4 µm (92 %), CH₄ 3.3 µm (89 %), CH₄ 2.3 µm, CO 4.6 µm; 8 rasgos falsos descartados |
+| Arp 220 (galaxia ultraluminosa) | hielo de agua, PAH, CO | Hielo H₂O 6.4×10¹⁷ cm⁻² (25σ), PAH 3.3 µm en emisión, CO gaseoso |
+| NGC 7714 (brote estelar) | hidrógeno ionizado, PAH | Brα (16σ), Paα (11σ), CO de estrellas frías, PAH (posible) |
+| Elias 2-29 (protoestrella brillante) | satura SPHEREx | `quality: poor`, aviso de saturación, nada confirmado |
+
+**Uso recomendado en la app:** botón "Analizar composición" en el panel de la fuente clicada (no automático).
+Mientras corre, mostrar `stage` ("Fotometría 40/86", "Analizando bandas de composición").
+
 ---
 
 ## 6. Asteroides — `POST /api/asteroids/predict-from-current` (JPL Horizons)
@@ -969,6 +1096,8 @@ dibujarPunto(p.x * k, p.y * k);
 **B. Resta entre épocas:** elegir ids de dos fechas de `seq.frames` → `GET /api/stack?…&op=diff&a=<nuevos>&b=<viejos>` → `png_url`.
 
 **C. Clic en una fuente → espectro:** `GET /api/spectrum?ra&dec&aperture=6` (solo al hacer clic).
+
+**C2. Composición del punto elegido:** botón "Analizar composición" → `GET /api/composition?ra&dec&aperture=6` → panel con `summary`, `ices`, `elements_supported` e `indicators`.
 
 **D. Asteroide:** modo "🎯 Asteroide" → número MPC + clic → `POST /api/asteroids/predict-from-current` → dibujar
 `current_observation.pixel`, la línea de `track[]` y `pixel`.

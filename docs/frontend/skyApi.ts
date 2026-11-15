@@ -248,6 +248,12 @@ export const api = {
   overlay: (p: Coord & { catalog: "gaia" | "wise"; fov?: number; at?: string }) =>
     request<any>("GET", "/api/overlay", p).then((r) => r.data),
 
+  /** Composición estimada en (ra, dec): hielos (moléculas/cm²), moléculas, minerales, H ionizado y elementos (LENTO). */
+  composition: (p: Coord & { aperture?: number; date_from?: string; date_to?: string;
+                             context?: "auto" | "brown_dwarf" | "yso" | "cloud" | "hii" | "pn" | "galaxy" | "star" | "solar_system" | "unknown" },
+                onProgress?: OnProgress, signal?: AbortSignal) =>
+    slow<any>("GET", "/api/composition", p, undefined, onProgress, signal),
+
   // ----- Asteroides (JPL Horizons) -----------------------------------------------------------------------------
   /** El usuario marca el asteroide (T3) en un frame + su número MPC → posición futura según JPL Horizons,
    *  trayectoria (`track`, 9 puntos) y píxeles en la vista. Responde 200 directo (~1 s; caché después).
