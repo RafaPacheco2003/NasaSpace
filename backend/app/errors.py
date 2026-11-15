@@ -115,4 +115,7 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception):
         log.exception("Error no controlado")
-        return APIError(500, "internal_error", f"Error interno: {type(exc).__name__}").response()
+        # Los 500 se generan FUERA de CORSMiddleware (Starlette): sin estas cabeceras el navegador mostraría
+        # "CORS error" en lugar del mensaje.
+        return APIError(500, "internal_error", f"Error interno: {type(exc).__name__}",
+                        {"Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "*"}).response()

@@ -85,13 +85,40 @@ async def log_browser_origin(request, call_next):
         _access.info("origen=%s %s %s → %s", origin, request.method, request.url.path, response.status_code)
     return response
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+# CORS abierto a TODO: cualquier origen, método y cabecera; el navegador puede leer todas las cabeceras de respuesta.
+# (Sin cookies/credenciales: la API no usa autenticación, así que "*" es válido.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Retry-After"],
+    expose_headers=["*"],
+    max_age=86400,          # el navegador recuerda el preflight 24 h (menos peticiones OPTIONS)
 )
+
+
+class PrivateNetworkAccess:
+    """Chrome (Private Network Access): una página pública (https://…vercel.app, ngrok) que llama a una IP local
+    (http://192.168.x.x:8000) primero manda un preflight con `Access-Control-Request-Private-Network: true` y exige
+    `Access-Control-Allow-Private-Network: true` en la respuesta. Va por FUERA de CORSMiddleware."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "OPTIONS":
+            return await self.app(scope, receive, send)
+        wants = any(k.lower() == b"access-control-request-private-network" for k, _ in scope.get("headers", []))
+
+        async def send_wrapper(message):
+            if wants and message["type"] == "http.response.start":
+                message.setdefault("headers", []).append((b"access-control-allow-private-network", b"true"))
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+app.add_middleware(PrivateNetworkAccess)
 
 def custom_openapi():
     """OpenAPI sin las respuestas 422 de FastAPI: esta API devuelve 400 con la forma de error del contrato."""
