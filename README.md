@@ -749,4 +749,17 @@ un volumen persistente para `/data/cache`, 1–2 GB de RAM, y `TRUST_PROXY=true`
 contexto `.` y el puerto que Render pone en `$PORT` (la imagen lo respeta; en local es 8000).
 Variables útiles en *Environment*: `TRUST_PROXY=true`, `SPHEREX_MODE=irsa`. *Health Check Path*: `/healthz`.
 Sin disco persistente la caché se pierde en cada deploy (funciona igual, solo más lento la primera vez).
-# NasaSpace
+
+---
+
+## AI Assistance Disclosure
+
+Parts of this project were developed with assistance from
+OpenAI ChatGPT and Anthropic Claude, including code generation, debugging,
+data preprocessing, and model development.
+
+All AI-assisted code was reviewed, adapted, and tested by the BlinkX development team.
+
+---
+
+# Blink X
