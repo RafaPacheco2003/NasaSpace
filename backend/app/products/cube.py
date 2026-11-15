@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Cubo all-sky de SPHEREx (colección spherex_dr1_cube, 102 canales) — basado en SphereX-pipeline.
 
 - Tesela HEALPix (orden 5, 512×512 px, proyección HPX) que CONTIENE la coordenada (verificado con su WCS).

@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Cliente HTTP compartido con timeout por fuente (10 s), 1 reintento y registro de salud."""
 from __future__ import annotations
 

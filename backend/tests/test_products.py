@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """L2 completo y cubo all-sky (pipeline SphereX) con FITS sintéticos: sin red."""
 import io
 import time

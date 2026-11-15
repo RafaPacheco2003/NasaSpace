@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Análisis: /api/predict, /api/spectrum, /api/overlay. Trabajos: /api/jobs/{id}."""
 from __future__ import annotations
 

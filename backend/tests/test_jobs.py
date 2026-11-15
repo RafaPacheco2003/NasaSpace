@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Cola de trabajos: pausa de huérfanos, reanudación con el mismo id, carril pesado y singleflight."""
 import asyncio
 import dataclasses

@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Imagen L2 COMPLETA de SPHEREx (producto publicado por IRSA, colección spherex_dr1) — basado en SphereX-pipeline.
 
 - Selección: exposiciones que cubren la coordenada (consulta de 1″), ordenadas por fecha; dentro de las fechas

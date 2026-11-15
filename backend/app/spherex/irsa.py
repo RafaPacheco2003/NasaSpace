@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Proveedor real: SPHEREx en IRSA.
 
 - Búsqueda de exposiciones que cubren un punto: SIA v2 (https://irsa.ipac.caltech.edu/SIA, COLLECTION=spherex_dr1).

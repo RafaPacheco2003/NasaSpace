@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 # Build desde la RAÍZ del repo:  docker build -t spherex-sky-api .
 FROM python:3.12-slim
 

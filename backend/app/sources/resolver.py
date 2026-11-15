@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Resolución de nombres: SIMBAD (vía Sesame de CDS) y, si no está, NED."""
 from __future__ import annotations
 

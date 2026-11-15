@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """POST /api/asteroids/predict-from-current con JPL Horizons (simulado: asteroide que se mueve en línea recta)."""
 import math
 

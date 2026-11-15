@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Parámetros reutilizables y el helper del patrón 202 + trabajo."""
 from __future__ import annotations
 

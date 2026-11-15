@@ -1,3 +1,6 @@
+// SI-assisted development used for code development, debugging and documentation.
+// Tool: ChatGPT, Claude
+
 /**
  * Cliente del backend "SpaceX Sky API" para el Frontend (sin dependencias; TypeScript/JavaScript).
  * Copiar este archivo al repo del Frontend (p. ej. src/lib/skyApi.ts) y sustituir los datos mock por estas funciones.

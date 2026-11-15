@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
 # =============================================================================
 #  probar_api.sh — Prueba todos los endpoints de la SPHEREx Sky API
 #

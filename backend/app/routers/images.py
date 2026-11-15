@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Imágenes: /api/frames, /api/sequence, /api/frame/{id}.png, /api/stack, /api/stack/{id}.png, /api/coverage."""
 from __future__ import annotations
 

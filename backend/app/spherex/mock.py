@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Proveedor sintético (SPHEREX_MODE=mock): genera FITS con la misma estructura que SPHEREx.
 
 Sirve para desarrollar el Frontend y correr tests sin red. El cielo es determinista:

@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Productos del pipeline SphereX: L2 completo (raw / color / clic) y cubo all-sky (102 canales, 6 canales, 3D)."""
 from __future__ import annotations
 

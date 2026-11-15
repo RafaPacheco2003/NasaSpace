@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Tests sin red (SPHEREX_MODE=mock y catálogos simulados)."""
 import io
 import time

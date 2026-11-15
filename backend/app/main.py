@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """SPHEREx Sky API — Backend del SPHEREx Explorer (FastAPI)."""
 from __future__ import annotations
 

@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Fuentes de Gaia DR3 y WISE (AllWISE / CatWISE2020) para dibujar sobre la imagen."""
 from __future__ import annotations
 

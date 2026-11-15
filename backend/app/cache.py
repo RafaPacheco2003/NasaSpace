@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Caché en disco (diskcache). Clave = (consulta, fuente), coordenadas redondeadas a 1″, vigencia 24 h.
 
 Se guarda en disco para que sobreviva a reinicios del contenedor (volumen /data/cache).

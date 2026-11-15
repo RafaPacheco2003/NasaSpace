@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Composición estimada en una coordenada a partir del espectro SPHEREx (0.75–5 µm).
 
 Qué se puede y qué no se puede saber con SPHEREx (resolución R≈40 en 0.75–3.8 µm y R≈110–130 en 3.8–5 µm):

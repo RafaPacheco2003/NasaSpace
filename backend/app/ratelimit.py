@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Límite de peticiones por IP (token bucket) → 429 con Retry-After.
 
 El sondeo de trabajos y las imágenes PNG no cuentan: una secuencia de 60 frames

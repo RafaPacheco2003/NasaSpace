@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Interpretación espectral de SPECTRAL_CHANNELS (copiado de SphereX-pipeline/spectral.py, extraído de m101_allsky_102_canales.ipynb)."""
 import re
 import numpy as np

@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Modelos comunes de SPHEREx: metadatos de frame, recorte y banderas de calidad."""
 from __future__ import annotations
 

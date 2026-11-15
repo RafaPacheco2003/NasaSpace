@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Configuración del servicio. Todo se puede sobreescribir con variables de entorno."""
 from __future__ import annotations
 

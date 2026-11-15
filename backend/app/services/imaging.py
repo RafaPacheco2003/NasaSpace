@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Secuencia (blink) y apilado/resta de frames."""
 from __future__ import annotations
 

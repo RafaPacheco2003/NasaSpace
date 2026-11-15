@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Errores con la forma única del contrato: {"error": {"code", "message"}}."""
 from __future__ import annotations
 

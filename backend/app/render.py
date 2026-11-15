@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Render de arreglos (MJy/sr) a PNG: estiramiento, mapa de color, transparencia donde no hay datos."""
 from __future__ import annotations
 

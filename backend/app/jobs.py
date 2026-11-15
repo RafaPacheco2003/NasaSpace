@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Procesos lentos: patrón 202 + trabajo.
 
 - El id es determinista (hash de la consulta): la misma consulta devuelve el mismo trabajo.

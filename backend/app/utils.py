@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Utilidades comunes: JSON limpio, fechas, parseo de listas en query."""
 from __future__ import annotations
 

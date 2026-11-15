@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Composición a partir del espectro: espectros sintéticos con bandas conocidas (sin red)."""
 import numpy as np
 import pytest

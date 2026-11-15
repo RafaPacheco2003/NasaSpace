@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Asteroides: posición futura con JPL Horizons (sin modelo de IA).
 
 El usuario marca el asteroide en el frame que ve (T3) e indica su número MPC. El backend:

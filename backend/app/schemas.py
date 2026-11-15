@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Esquemas de respuesta para Swagger/OpenAPI (/docs).
 
 Solo documentan la forma de las respuestas (con ejemplos reales de SPHEREx DR1);

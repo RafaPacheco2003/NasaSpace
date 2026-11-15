@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Servicio SPHEREx: búsqueda de frames, registro de ids, recortes, reproyección y fotometría.
 
 El proveedor (IRSA real o mock) se elige con SPHEREX_MODE. Todo lo demás es común.

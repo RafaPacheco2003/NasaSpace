@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Astronomía: épocas, movimiento propio + paralaje, geometría TAN de las imágenes."""
 from __future__ import annotations
 

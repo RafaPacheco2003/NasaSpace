@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """CORS abierto a todo: cualquier origen, método y cabecera, también en errores (404, 500) y con Private Network Access."""
 import pytest
 from fastapi.testclient import TestClient

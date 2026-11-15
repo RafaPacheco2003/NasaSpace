@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Espectro por exposición y predicción de posiciones."""
 from __future__ import annotations
 

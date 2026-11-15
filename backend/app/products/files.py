@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Descarga íntegra de FITS grandes (L2 completo ≈ 65 MB, tesela de cubo ≈ 320 MB) con caché en disco.
 
 Portado de SphereX-pipeline/downloads.py a async (httpx):

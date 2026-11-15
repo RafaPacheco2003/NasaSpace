@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Catálogos: /api/resolve y /api/objects."""
 from __future__ import annotations
 

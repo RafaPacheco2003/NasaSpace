@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Utilidades comunes de L2 completo y cubos all-sky: normalización del pipeline, PNG y conversión de píxeles.
 
 Convención de píxeles para el Frontend (igual que el resto de la API): coordenadas CONTINUAS en el PNG mostrado,

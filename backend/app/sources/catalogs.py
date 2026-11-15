@@ -1,3 +1,6 @@
+# SI-assisted development used for code development, debugging and documentation.
+# Tool: ChatGPT, Claude
+
 """Búsquedas de cono en SIMBAD y NED (TAP/ADQL) y clasificación star/galaxy/other."""
 from __future__ import annotations
 
