@@ -17,22 +17,24 @@ info:
 
     |---|---|---|
 
-    | **IRSA** SIA v2 + cutouts (SPHEREx DR1) | NASA/Caltech | frames, coverage, sequence,
-    frame PNG, stack, spectrum, predict |
+    | **IRSA** SIA v2 + cutouts (SPHEREx DR1) + MOST | NASA/Caltech | frames, coverage,
+    sequence, frame PNG, stack, spectrum, predict, asteroids |
 
     | **SIMBAD** (Sesame + TAP, espejo Harvard) | CDS Estrasburgo | resolve, objects,
     predict |
 
     | **NED** (ObjectLookup + TAP) | NASA/IPAC | resolve, objects |
 
-    | **Gaia DR3** (TAP) | ESA | overlay (catalog=gaia) |
+    | **Gaia DR3** (TAP) | ESA | overlay (catalog=gaia), asteroids (confusión con
+    estrellas) |
 
     | **AllWISE** (IRSA TAP / Gator) | NASA/IPAC | overlay (catalog=wise) |
 
-    | **JPL Horizons** | NASA JPL | predict (asteroides y cometas) |
+    | **JPL Horizons** | NASA JPL | predict (asteroides y cometas), asteroids (observador
+    SPHEREx) |
 
 
-    **Reglas:** GET (salvo `POST /api/asteroids/predict`, el modelo ML), sin autenticación,
+    **Reglas:** GET (salvo `POST /api/asteroids/predict-from-current`), sin autenticación,
     CORS abierto. Coordenadas en grados (ICRS/J2000); radio, fov y apertura
 
     en segundos de arco. Timeout 10 s por fuente externa con 1 reintento. Caché 24
@@ -41,8 +43,8 @@ info:
     Si falla solo una de las fuentes pedidas → 200 con `partial: true`.
 
 
-    **Procesos lentos** (`sequence`, `stack`, `spectrum`, `predict`): 200 si el resultado
-    está en caché; si no,
+    **Procesos lentos** (`sequence`, `stack`, `spectrum`, `predict`, `asteroids/predict-from-current`,
+    `l2`, `cube`): 200 si el resultado está en caché; si no,
 
     **202 + Job** → consultar `GET /api/jobs/{id}` cada `poll_after_ms` hasta `done`
     o `failed`.
@@ -1069,7 +1071,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^[a-z]{3}_[0-9a-f]{6,40}$
+          pattern: ^[a-z0-9]{3}_[0-9a-f]{6,40}$
           title: Job Id
       responses:
         '200':
@@ -1380,42 +1382,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/asteroids/predict:
+  /api/asteroids/predict-from-current:
     post:
       tags:
-      - Asteroides (ML)
-      summary: Posición futura de un asteroide con el LSTM (EXPERIMENTAL)
-      description: '**Para qué sirve:** dadas **3 observaciones** del mismo asteroide
-        (huecos ≤ 3 días) y un horizonte
-
-        `horizon_days` (0 < h ≤ 3), estima dónde estará (RA/Dec) con una red LSTM
-        entrenada con
-
-        observaciones de **Gaia** y exportada a ONNX. Sin API externa; corre en CPU
-        en milisegundos.
-
-
-        **Tiempo:** `epoch` = días TCB desde JD 2455197.5 (columna `epoch` de Gaia
-        SSO), **no** Unix ni año.
-
-        Si prefieres fechas normales, manda `time` (ISO UTC) en lugar de `epoch` y
-        la API lo convierte.
-
-
-        **Límites:** geometría Gaia-céntrica (no es la posición vista desde la Tierra
-        ni desde SPHEREx),
-
-        sin incertidumbre calibrada y no validado fuera de 3 días. Para efemérides
-        de verdad usar
-
-        `GET /api/predict` (JPL Horizons). Validación fallida → **400** con la forma
-        de error del contrato.'
-      operationId: predict_asteroid_api_asteroids_predict_post
+      - Asteroides
+      summary: Dónde estará un asteroide (JPL Horizons) + píxeles para dibujarlo en
+        la imagen
+      description: "**Para qué sirve:** el usuario marca el asteroide en el frame\
+        \ que está viendo (T3) y da su número MPC.\n\n1. **Identidad:** JPL Horizons\
+        \ (observador = SPHEREx, `-163182`) en la fecha de T3. Si el clic está a más\
+        \ de\n   60″ de la efeméride → `422 identity_mismatch`.\n2. **Predicción:**\
+        \ posición en T3 + `horizon_days` (0 < h ≤ 30).\n3. **Trayectoria:** 9 posiciones\
+        \ de T3 a la predicción (`track`) para dibujar la línea.\n4. **Píxeles:**\
+        \ con `view` (= ra, dec, fov, size del PNG mostrado) cada posición trae `pixel.x`\
+        \ / `pixel.y_top`\n   desde la esquina superior izquierda e `inside_image`.\n\
+        \nResponde 200 directo (~1–2 s la primera vez, instantáneo después; con caché).\n\
+        \n**API externa:** JPL Horizons (e IRSA solo si se manda `image_id` que no\
+        \ está en caché)."
+      operationId: predict_from_current_api_asteroids_predict_from_current_post
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AsteroidForecastRequest'
+              $ref: '#/components/schemas/CurrentForecastRequest'
         required: true
       responses:
         '200':
@@ -1423,9 +1412,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AsteroidForecastResult'
+                $ref: '#/components/schemas/CurrentForecastResult'
         '400':
           description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
           content:
             application/json:
               schema:
@@ -1436,14 +1431,859 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '500':
-          description: Error interno
+        '502':
+          description: Fallaron todas las fuentes pedidas
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '503':
-          description: El modelo ONNX no está disponible (faltan archivos o no cargó)
+  /api/l2:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Imagen L2 completa para una coordenada y fechas (lento → 202 + trabajo)
+      description: '**Para qué sirve:** obtener la imagen **L2 completa** (2040×2040,
+        ~3.5°) de SPHEREx que cubre la coordenada,
+
+        como el pipeline `SphereX-pipeline`: entre las exposiciones de las fechas
+        pedidas se elige la **tercera en orden
+
+        cronológico** (o la última si hay menos), o la que se indique con `frame_id`.
+
+
+        Devuelve las URLs de la imagen **raw** (gris invertido) y **color** (cividis),
+        la posición de la coordenada en el
+
+        PNG (`target.x/y`), su brillo, la lista de exposiciones candidatas y la plantilla
+        del clic (`pixel_url`).
+
+        La primera vez descarga el FITS completo (~65 MB) → 202 + trabajo; después
+        200 desde caché.
+
+
+        **API externa:** IRSA (SIA spherex_dr1 + descarga del FITS L2).'
+      operationId: l2_prepare_api_l2_get
+      parameters:
+      - name: ra
+        in: query
+        required: true
+        schema:
+          type: number
+          minimum: 0
+          exclusiveMaximum: 360
+          description: Ascensión recta en grados (ICRS/J2000).
+          examples:
+          - 133.795129
+          title: Ra
+        description: Ascensión recta en grados (ICRS/J2000).
+      - name: dec
+        in: query
+        required: true
+        schema:
+          type: number
+          maximum: 90
+          minimum: -90
+          description: Declinación en grados (ICRS/J2000).
+          examples:
+          - -7.245147
+          title: Dec
+        description: Declinación en grados (ICRS/J2000).
+      - name: date_from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Desde (YYYY-MM-DD)
+          title: Date From
+        description: Desde (YYYY-MM-DD)
+      - name: date_to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Hasta (YYYY-MM-DD)
+          title: Date To
+        description: Hasta (YYYY-MM-DD)
+      - name: detector
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 6
+            minimum: 1
+          - type: 'null'
+          description: 'Detector de SPHEREx. 1: 0.75–1.09 µm · 2: 1.10–1.62 · 3: 1.63–2.41
+            · 4: 2.42–3.82 · 5: 3.83–4.41 · 6: 4.42–5.00. Sin valor = todos.'
+          title: Detector
+        description: 'Detector de SPHEREx. 1: 0.75–1.09 µm · 2: 1.10–1.62 · 3: 1.63–2.41
+          · 4: 2.42–3.82 · 5: 3.83–4.41 · 6: 4.42–5.00. Sin valor = todos.'
+      - name: frame_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^sx-d[1-6]-\d+$
+          - type: 'null'
+          description: Elegir una exposición concreta (de `candidates`)
+          title: Frame Id
+        description: Elegir una exposición concreta (de `candidates`)
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 2040
+          minimum: 64
+          description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO
+            en /pixel.
+          default: 1024
+          title: Size
+        description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO en
+          /pixel.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '202':
+          description: Trabajo creado o en curso; consultar /api/jobs/{id}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Demasiadas peticiones desde la misma IP (cabecera Retry-After)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Fallaron todas las fuentes pedidas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/l2/{frame_id}/raw.png:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: 'L2 ''raw'': IMAGE normalizada en gris'
+      description: 'IMAGE del L2 normalizada con percentiles 3.5–96.5 (pipeline),
+        en gris. Orientación del detector
+
+        (fila 0 del FITS abajo); ver `orientation` en /api/l2 para el norte.'
+      operationId: l2_raw_api_l2__frame_id__raw_png_get
+      parameters:
+      - name: frame_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^sx-d[1-6]-\d+$
+          description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+          title: Frame Id
+        description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 2040
+          minimum: 64
+          description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO
+            en /pixel.
+          default: 1024
+          title: Size
+        description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO en
+          /pixel.
+      - name: invert
+        in: query
+        required: false
+        schema:
+          type: boolean
+          description: true = gris invertido (gray_r, como el pipeline); false = gris
+            normal
+          default: true
+          title: Invert
+        description: true = gris invertido (gray_r, como el pipeline); false = gris
+          normal
+      responses:
+        '200':
+          description: Imagen PNG (TAN, norte arriba, este a la izquierda)
+          content:
+            application/json:
+              schema: {}
+            image/png: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/l2/{frame_id}/color.png:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: 'L2 ''color'': pseudocolor cividis del raw'
+      description: La misma normalización del raw en pseudocolor **cividis** (no es
+        color visible); píxeles inválidos en negro.
+      operationId: l2_color_api_l2__frame_id__color_png_get
+      parameters:
+      - name: frame_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^sx-d[1-6]-\d+$
+          description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+          title: Frame Id
+        description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 2040
+          minimum: 64
+          description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO
+            en /pixel.
+          default: 1024
+          title: Size
+        description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO en
+          /pixel.
+      responses:
+        '200':
+          description: Imagen PNG (TAN, norte arriba, este a la izquierda)
+          content:
+            application/json:
+              schema: {}
+            image/png: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/l2/{frame_id}/pixel:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: 'Clic en el L2: RA/Dec + brillo de ese píxel'
+      description: '**Para qué sirve:** al picar la imagen raw o color, mostrar **RA/Dec**
+        de ese punto y su **brillo**:
+
+        `brightness.value` (MJy/sr, IMAGE del L2), `zodi`, `value_minus_zodi`, `error`
+        (√VARIANCE),
+
+        `wavelength_um` de **ese** píxel (WCS-WAVE: el filtro de SPHEREx cambia a
+        lo largo del detector) y `flags`.
+
+        `x, y` en píxeles del PNG mostrado con el mismo `size`. También acepta `ra,
+        dec`.'
+      operationId: l2_pixel_api_l2__frame_id__pixel_get
+      parameters:
+      - name: frame_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^sx-d[1-6]-\d+$
+          description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+          title: Frame Id
+        description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+      - name: x
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+          - type: 'null'
+          description: Píxel del PNG desde el borde IZQUIERDO
+          title: X
+        description: Píxel del PNG desde el borde IZQUIERDO
+      - name: y
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+          - type: 'null'
+          description: Píxel del PNG desde el borde SUPERIOR
+          title: Y
+        description: Píxel del PNG desde el borde SUPERIOR
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 2040
+          minimum: 64
+          description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO
+            en /pixel.
+          default: 1024
+          title: Size
+        description: Lado mayor del PNG en píxeles (nativo 2040). Usar el MISMO en
+          /pixel.
+      - name: ra
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            minimum: 0
+            exclusiveMaximum: 360
+          - type: 'null'
+          description: 'Alternativa: coordenada → píxel y valores'
+          title: Ra
+        description: 'Alternativa: coordenada → píxel y valores'
+      - name: dec
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            maximum: 90
+            minimum: -90
+          - type: 'null'
+          title: Dec
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/l2/{frame_id}/fits:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Descargar el FITS L2 original (redirige a IRSA)
+      operationId: l2_fits_api_l2__frame_id__fits_get
+      parameters:
+      - name: frame_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^sx-d[1-6]-\d+$
+          description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+          title: Frame Id
+        description: Id del frame L2 (de /api/l2, /api/frames o /api/sequence)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '307':
+          description: Redirección a IRSA
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Cubo all-sky de 102 canales para una coordenada (lento → 202 + trabajo)
+      description: '**Para qué sirve:** el **sky cube** de SPHEREx (todo el cielo
+        combinado, 102 canales 0.75–5 µm) en la tesela
+
+        HEALPix que contiene la coordenada, como el pipeline. Devuelve los 102 canales
+        (λ, bordes, ancho de banda) con la URL
+
+        del PNG de cada uno, los **6 canales** del script (1, 20, 40, 60, 80, 102),
+        el **espectro** de 102 puntos en la
+
+        coordenada (brillo, FLAGS, NHITS) y las URLs de la figura de 6 canales, la
+        vista 3D y el clic.
+
+
+        La primera vez descarga la tesela completa (~320 MB, 30–90 s) → 202 + trabajo
+        con progreso; después 200.
+
+        El cubo no tiene fechas (es la combinación de todo el survey).
+
+
+        **API externa:** IRSA (SIA spherex_dr1_cube + descarga de la tesela).'
+      operationId: cube_prepare_api_cube_get
+      parameters:
+      - name: ra
+        in: query
+        required: true
+        schema:
+          type: number
+          minimum: 0
+          exclusiveMaximum: 360
+          description: Ascensión recta en grados (ICRS/J2000).
+          examples:
+          - 133.795129
+          title: Ra
+        description: Ascensión recta en grados (ICRS/J2000).
+      - name: dec
+        in: query
+        required: true
+        schema:
+          type: number
+          maximum: 90
+          minimum: -90
+          description: Declinación en grados (ICRS/J2000).
+          examples:
+          - -7.245147
+          title: Dec
+        description: Declinación en grados (ICRS/J2000).
+      - name: size
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 2048
+            minimum: 64
+          - type: 'null'
+          description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+          title: Size
+        description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '202':
+          description: Trabajo creado o en curso; consultar /api/jobs/{id}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Demasiadas peticiones desde la misma IP (cabecera Retry-After)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Fallaron todas las fuentes pedidas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/channels:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Lista de canales del cubo (102 o los 6 del script)
+      description: Canal, λ central, bordes y ancho de banda (µm), detector, resolución
+        R y la URL del PNG de cada plano.
+      operationId: cube_channels_api_cube__tile_id__channels_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      - name: set
+        in: query
+        required: false
+        schema:
+          enum:
+          - all
+          - six
+          type: string
+          description: all = 102 canales · six = 1,20,40,60,80,102
+          default: all
+          title: Set
+        description: all = 102 canales · six = 1,20,40,60,80,102
+      - name: cmap
+        in: query
+        required: false
+        schema:
+          enum:
+          - gray_r
+          - gray
+          - inferno
+          - magma
+          - viridis
+          - cividis
+          type: string
+          default: gray_r
+          title: Cmap
+      - name: size
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 2048
+            minimum: 64
+          - type: 'null'
+          description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+          title: Size
+        description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/channel/{channel}.png:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Un plano del cubo (canal 1–102)
+      description: 'Plano `channel` normalizado con SUS percentiles 3.5–96.5 (como
+        samples.png). Sin datos → transparente.
+
+        Proyección HEALPix de la tesela (no está con el norte arriba: ver `orientation`).'
+      operationId: cube_channel_png_api_cube__tile_id__channel__channel__png_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 102
+          minimum: 1
+          title: Channel
+      - name: cmap
+        in: query
+        required: false
+        schema:
+          enum:
+          - gray_r
+          - gray
+          - inferno
+          - magma
+          - viridis
+          - cividis
+          type: string
+          default: gray_r
+          title: Cmap
+      - name: size
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 2048
+            minimum: 64
+          - type: 'null'
+          description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+          title: Size
+        description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+      responses:
+        '200':
+          description: Imagen PNG (TAN, norte arriba, este a la izquierda)
+          content:
+            application/json:
+              schema: {}
+            image/png: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/pixel:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: 'Clic en el cubo: RA/Dec + espectro de 102 canales'
+      description: 'RA/Dec del punto y su espectro: 102 × (λ, ancho de banda, brillo
+        en BUNIT, FLAGS, NHITS).'
+      operationId: cube_pixel_api_cube__tile_id__pixel_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      - name: x
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+          - type: 'null'
+          description: Píxel del PNG desde el borde IZQUIERDO
+          title: X
+        description: Píxel del PNG desde el borde IZQUIERDO
+      - name: y
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+          - type: 'null'
+          description: Píxel del PNG desde el borde SUPERIOR
+          title: Y
+        description: Píxel del PNG desde el borde SUPERIOR
+      - name: size
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 2048
+            minimum: 64
+          - type: 'null'
+          description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+          title: Size
+        description: Lado mayor del PNG (nativo 512). Usar el MISMO en /pixel.
+      - name: ra
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            minimum: 0
+            exclusiveMaximum: 360
+          - type: 'null'
+          title: Ra
+      - name: dec
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            maximum: 90
+            minimum: -90
+          - type: 'null'
+          title: Dec
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Falta un parámetro, coordenadas fuera de rango o límites excedidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/samples.png:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Figura de los 6 canales del script (samples.png)
+      description: Los canales 1, 20, 40, 60, 80, 102 con ejes RA/Dec, λ, Δλ y barra
+        de color (y la cruz roja en ra/dec).
+      operationId: cube_samples_api_cube__tile_id__samples_png_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      - name: ra
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            minimum: 0
+            exclusiveMaximum: 360
+          - type: 'null'
+          title: Ra
+      - name: dec
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: number
+            maximum: 90
+            minimum: -90
+          - type: 'null'
+          title: Dec
+      responses:
+        '200':
+          description: Imagen PNG (TAN, norte arriba, este a la izquierda)
+          content:
+            application/json:
+              schema: {}
+            image/png: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/preview3d:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Malla 3D (102 × 32 × 32) para un visor WebGL
+      description: 'Equivalente a `preview3d.npz` del pipeline: brillo[canal][y][x],
+        ejes x/y (píxel FITS) y λ.'
+      operationId: cube_preview3d_api_cube__tile_id__preview3d_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      - name: n
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 64
+          minimum: 8
+          description: Muestras por eje espacial
+          default: 32
+          title: N
+        description: Muestras por eje espacial
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/cube3d.png:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Vista 3D estática de los 102 planos (cube3d.png)
+      operationId: cube_3d_api_cube__tile_id__cube3d_png_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      responses:
+        '200':
+          description: Imagen PNG (TAN, norte arriba, este a la izquierda)
+          content:
+            application/json:
+              schema: {}
+            image/png: {}
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/cube/{tile_id}/fits:
+    get:
+      tags:
+      - L2 y cubo all-sky
+      summary: Descargar la tesela FITS original (redirige a IRSA)
+      operationId: cube_fits_api_cube__tile_id__fits_get
+      parameters:
+      - name: tile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^hpx[0-9a-z-]+$
+          description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+          title: Tile Id
+        description: Id de la tesela del cubo (de /api/cube), p. ej. hpx5-2858
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '307':
+          description: Redirección a IRSA
+        '404':
+          description: No se encontró el nombre, el frame o el trabajo (expirado)
           content:
             application/json:
               schema:
@@ -1470,135 +2310,46 @@ paths:
                 $ref: '#/components/schemas/StatusResult'
 components:
   schemas:
-    AsteroidForecastRequest:
+    AsteroidClick:
       properties:
-        asteroid_id:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Asteroid Id
-          description: Solo identificador; no entra al modelo
-        observations:
-          items:
-            $ref: '#/components/schemas/AsteroidObservation'
-          type: array
-          title: Observations
-          description: Exactamente 3, del mismo asteroide, ordenadas por fecha; huecos
-            ≤ 3 días
-        horizon_days:
+        mjd_utc:
           type: number
-          maximum: 3.0
-          exclusiveMinimum: 0.0
-          title: Horizon Days
-          description: Días desde la última observación (0 < h ≤ 3)
-      type: object
-      required:
-      - observations
-      - horizon_days
-      title: AsteroidForecastRequest
-      example:
-        asteroid_id: 1
-        horizon_days: 1.5
-        observations:
-        - dec: 10.0
-          epoch: 1800.0
-          ra: 40.0
-        - dec: 10.1
-          epoch: 1800.5
-          ra: 40.1
-        - dec: 10.2
-          epoch: 1801.5
-          ra: 40.3
-    AsteroidForecastResult:
-      properties:
-        asteroid_id:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Asteroid Id
-        predicted_ra_deg:
-          type: number
-          title: Predicted Ra Deg
-        predicted_dec_deg:
-          type: number
-          title: Predicted Dec Deg
-        forecast_epoch:
-          type: number
-          title: Forecast Epoch
-          description: Epoch Gaia de la predicción = última epoch + horizon_days
-        forecast_time:
-          type: string
-          title: Forecast Time
-          description: La misma fecha en ISO UTC
-        horizon_days:
-          type: number
-          title: Horizon Days
-        status:
-          type: string
-          const: experimental
-          title: Status
-        frame:
-          type: string
-          title: Frame
-        time_scale:
-          type: string
-          title: Time Scale
-      type: object
-      required:
-      - predicted_ra_deg
-      - predicted_dec_deg
-      - forecast_epoch
-      - forecast_time
-      - horizon_days
-      - status
-      - frame
-      - time_scale
-      title: AsteroidForecastResult
-      example:
-        asteroid_id: 1
-        forecast_epoch: 1803.0
-        forecast_time: '2014-12-08T23:58:34.254Z'
-        frame: ICRS, geometría Gaia-céntrica (la del entrenamiento)
-        horizon_days: 1.5
-        predicted_dec_deg: 10.217897
-        predicted_ra_deg: 40.652007
-        status: experimental
-        time_scale: epoch = días TCB desde JD 2455197.5 (Gaia)
-    AsteroidObservation:
-      properties:
-        epoch:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Epoch
-          description: Días TCB desde JD 2455197.5 (columna `epoch` de Gaia SSO).
-            NO es Unix ni año.
+          title: Mjd Utc
         time:
-          anyOf:
-          - type: string
-          - type: 'null'
+          type: string
           title: Time
-          description: 'Alternativa a epoch: fecha ISO 8601 UTC; la API la convierte
-            a epoch Gaia.'
         ra:
           type: number
-          exclusiveMaximum: 360.0
-          minimum: 0.0
           title: Ra
-          description: Ascensión recta en grados (ICRS)
+          description: Posición marcada por el usuario
         dec:
           type: number
-          maximum: 90.0
-          minimum: -90.0
           title: Dec
-          description: Declinación en grados (ICRS)
+        ephemeris_ra:
+          type: number
+          title: Ephemeris Ra
+          description: Posición de JPL Horizons en esa fecha
+        ephemeris_dec:
+          type: number
+          title: Ephemeris Dec
+        offset_arcsec:
+          type: number
+          title: Offset Arcsec
+          description: Distancia entre el clic y Horizons (≤ 60″ o 422)
+        pixel:
+          anyOf:
+          - $ref: '#/components/schemas/PixelResult'
+          - type: 'null'
       type: object
       required:
+      - mjd_utc
+      - time
       - ra
       - dec
-      title: AsteroidObservation
-      description: Una posición observada. Indicar `epoch` (escala Gaia) **o** `time`
-        (ISO UTC), no ambos.
+      - ephemeris_ra
+      - ephemeris_dec
+      - offset_arcsec
+      title: AsteroidClick
     Center:
       properties:
         ra:
@@ -1678,6 +2429,158 @@ components:
       - week_start
       - count
       title: CoverageWeek
+    CurrentForecastRequest:
+      properties:
+        asteroid_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Asteroid Id
+          description: Número MPC del asteroide (433 = Eros). Se usa en JPL Horizons
+        current_observation:
+          $ref: '#/components/schemas/MjdObservation'
+          description: 'T3: la posición marcada ahora (clic sobre el frame) y su fecha'
+        horizon_days:
+          type: number
+          maximum: 30.0
+          exclusiveMinimum: 0.0
+          title: Horizon Days
+          description: Días hacia adelante desde T3 (0 < h ≤ 30)
+        image_id:
+          anyOf:
+          - type: string
+            maxLength: 80
+          - type: 'null'
+          title: Image Id
+        view:
+          anyOf:
+          - $ref: '#/components/schemas/View'
+          - type: 'null'
+      type: object
+      required:
+      - asteroid_id
+      - current_observation
+      - horizon_days
+      title: CurrentForecastRequest
+      example:
+        asteroid_id: 433
+        current_observation:
+          dec: 25.248
+          mjd_utc: 60900.5
+          ra: 24.928
+        horizon_days: 1.5
+    CurrentForecastResult:
+      properties:
+        asteroid_id:
+          type: integer
+          title: Asteroid Id
+        target:
+          type: string
+          title: Target
+          description: Nombre según JPL Horizons
+        method:
+          type: string
+          const: horizons
+          title: Method
+        observer:
+          type: string
+          title: Observer
+          description: 500@-163182 = SPHEREx; 500@399 = geocentro (si no hay órbita
+            de SPHEREx)
+        current_observation:
+          $ref: '#/components/schemas/AsteroidClick'
+        predicted_ra_deg:
+          type: number
+          title: Predicted Ra Deg
+        predicted_dec_deg:
+          type: number
+          title: Predicted Dec Deg
+        sigma_arcsec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Sigma Arcsec
+        forecast_mjd_utc:
+          type: number
+          title: Forecast Mjd Utc
+        forecast_time:
+          type: string
+          title: Forecast Time
+        horizon_days:
+          type: number
+          title: Horizon Days
+        motion:
+          additionalProperties: true
+          type: object
+          title: Motion
+          description: arcsec_per_hour y position_angle_deg (desde el norte hacia
+            el este)
+        image_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Id
+        pixel:
+          anyOf:
+          - $ref: '#/components/schemas/PixelResult'
+          - type: 'null'
+          description: Píxel de la predicción en la vista (si se mandó view)
+        track:
+          items:
+            $ref: '#/components/schemas/TrackPoint'
+          type: array
+          title: Track
+          description: 9 posiciones de T3 a la predicción, para dibujar la trayectoria
+        warnings:
+          items:
+            type: string
+          type: array
+          title: Warnings
+        status:
+          type: string
+          const: ephemeris
+          title: Status
+      type: object
+      required:
+      - asteroid_id
+      - target
+      - method
+      - observer
+      - current_observation
+      - predicted_ra_deg
+      - predicted_dec_deg
+      - forecast_mjd_utc
+      - forecast_time
+      - horizon_days
+      - motion
+      - track
+      - warnings
+      - status
+      title: CurrentForecastResult
+      example:
+        asteroid_id: 433
+        current_observation:
+          dec: 25.248
+          ephemeris_dec: 25.2479
+          ephemeris_ra: 24.9281
+          mjd_utc: 60900.5
+          offset_arcsec: 0.5
+          ra: 24.928
+          time: '2025-08-27T12:00:00.000Z'
+        forecast_mjd_utc: 60902.0
+        forecast_time: '2025-08-29T00:00:00.000Z'
+        horizon_days: 1.5
+        method: horizons
+        motion:
+          arcsec_per_hour: 58.2
+          position_angle_deg: 52.1
+        observer: 500@-163182
+        predicted_dec_deg: 25.6
+        predicted_ra_deg: 25.41
+        sigma_arcsec: 0.01
+        status: ephemeris
+        target: 433 Eros (A898 PA)
+        track: []
+        warnings: []
     CurrentPosition:
       properties:
         ra:
@@ -1876,6 +2779,9 @@ components:
           - stack
           - predict
           - spectrum
+          - asteroid
+          - l2
+          - cube
           title: Kind
         status:
           type: string
@@ -1945,25 +2851,30 @@ components:
         queue_position: 0
         stage: Descargando frames 3/6
         status: running
-    ModelStatus:
+    MjdObservation:
       properties:
-        loaded:
-          type: boolean
-          title: Loaded
-        file:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: File
-        error:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Error
+        mjd_utc:
+          type: number
+          title: Mjd Utc
+          description: Fecha de la observación en MJD UTC (la de date_obs de SPHEREx)
+        ra:
+          type: number
+          exclusiveMaximum: 360.0
+          minimum: 0.0
+          title: Ra
+          description: Grados ICRS
+        dec:
+          type: number
+          maximum: 90.0
+          minimum: -90.0
+          title: Dec
+          description: Grados ICRS
       type: object
       required:
-      - loaded
-      title: ModelStatus
+      - mjd_utc
+      - ra
+      - dec
+      title: MjdObservation
     ObjectsResult:
       properties:
         partial:
@@ -2154,6 +3065,53 @@ components:
       - ra
       - dec
       title: OverlaySource
+    PixelResult:
+      properties:
+        x:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: X
+          description: Desde el borde IZQUIERDO, píxeles continuos (centro del PNG
+            = size/2)
+        y_top:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Y Top
+          description: Desde el borde SUPERIOR
+        inside_image:
+          type: boolean
+          title: Inside Image
+          description: 'false → la posición cae fuera del PNG mostrado: no dibujar'
+        image_width:
+          type: integer
+          title: Image Width
+        image_height:
+          type: integer
+          title: Image Height
+        image_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Id
+        image_date_obs:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Date Obs
+        in_frame_footprint:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: In Frame Footprint
+          description: Si la exposición image_id tiene datos en ese punto
+      type: object
+      required:
+      - inside_image
+      - image_width
+      - image_height
+      title: PixelResult
     PredictPosition:
       properties:
         date:
@@ -2804,14 +3762,13 @@ components:
           type: object
           title: Sources
           description: spherex, simbad, ned, gaia, wise, horizons
-        models:
+        jobs:
           anyOf:
-          - additionalProperties:
-              $ref: '#/components/schemas/ModelStatus'
+          - additionalProperties: true
             type: object
           - type: 'null'
-          title: Models
-          description: Modelos de ML locales (asteroid_lstm)
+          title: Jobs
+          description: 'Cola de trabajos: running, queued, paused_now, paused_total'
       type: object
       required:
       - status
@@ -2832,6 +3789,71 @@ components:
         spherex_mode: irsa
         status: ok
         version: 0.3.0
+    TrackPoint:
+      properties:
+        mjd_utc:
+          type: number
+          title: Mjd Utc
+        time:
+          type: string
+          title: Time
+        ra:
+          type: number
+          title: Ra
+        dec:
+          type: number
+          title: Dec
+        sigma_arcsec:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Sigma Arcsec
+          description: Incertidumbre 3σ de Horizons (RA/Dec), si la da
+        pixel:
+          anyOf:
+          - $ref: '#/components/schemas/PixelResult'
+          - type: 'null'
+          description: Solo si se mandó view
+      type: object
+      required:
+      - mjd_utc
+      - time
+      - ra
+      - dec
+      title: TrackPoint
+    View:
+      properties:
+        ra:
+          type: number
+          exclusiveMaximum: 360.0
+          minimum: 0.0
+          title: Ra
+        dec:
+          type: number
+          maximum: 90.0
+          minimum: -90.0
+          title: Dec
+        fov:
+          type: number
+          maximum: 3600.0
+          minimum: 10.0
+          title: Fov
+          description: Segundos de arco
+        size:
+          type: integer
+          maximum: 1024.0
+          minimum: 64.0
+          title: Size
+          description: Píxeles
+      type: object
+      required:
+      - ra
+      - dec
+      - fov
+      - size
+      title: View
+      description: 'Geometría del PNG que muestra el Frontend: los mismos ra, dec,
+        fov, size de /api/sequence o png_url.'
 tags:
 - name: Catálogos
   description: Nombres y objetos conocidos (SIMBAD, NED)
@@ -2843,9 +3865,12 @@ tags:
 - name: Análisis
   description: Espectro, predicción de posiciones y overlays (IRSA, SIMBAD, Horizons,
     Gaia, WISE)
-- name: Asteroides (ML)
-  description: Predicción EXPERIMENTAL de posición con un LSTM (ONNX) a partir de
-    3 observaciones Gaia
+- name: L2 y cubo all-sky
+  description: 'Pipeline SphereX: L2 completo (raw, color, clic → RA/Dec + brillo)
+    y cubo all-sky (102 canales, 6 canales, espectro, 3D)'
+- name: Asteroides
+  description: Dónde estará un asteroide (JPL Horizons, observador SPHEREx) y en qué
+    píxel de la imagen
 - name: Sistema
   description: Salud de la API y de las APIs externas
 servers:

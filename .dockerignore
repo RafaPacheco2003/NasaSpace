@@ -13,3 +13,6 @@ docker-compose.yml
 **/.env
 **/cache/
 **/*.fits
+backend/app/SphereX-pipeline/
+**/.cache/
+**/.DS_Store

@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 from . import errors, http
 from .config import settings
 from .ratelimit import rate_limit_middleware
-from .routers import analysis, asteroids, catalogs, images, system
+from .routers import analysis, asteroids, catalogs, images, products, system
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 for _noisy in ("reproject", "reproject.common", "httpx"):
@@ -27,18 +27,18 @@ El navegador solo llama a esta API. La API consulta estas **APIs externas** (pú
 
 | API externa | Organización | Se usa en |
 |---|---|---|
-| **IRSA** SIA v2 + cutouts (SPHEREx DR1) | NASA/Caltech | frames, coverage, sequence, frame PNG, stack, spectrum, predict |
+| **IRSA** SIA v2 + cutouts (SPHEREx DR1) + MOST | NASA/Caltech | frames, coverage, sequence, frame PNG, stack, spectrum, predict, asteroids |
 | **SIMBAD** (Sesame + TAP, espejo Harvard) | CDS Estrasburgo | resolve, objects, predict |
 | **NED** (ObjectLookup + TAP) | NASA/IPAC | resolve, objects |
-| **Gaia DR3** (TAP) | ESA | overlay (catalog=gaia) |
+| **Gaia DR3** (TAP) | ESA | overlay (catalog=gaia), asteroids (confusión con estrellas) |
 | **AllWISE** (IRSA TAP / Gator) | NASA/IPAC | overlay (catalog=wise) |
-| **JPL Horizons** | NASA JPL | predict (asteroides y cometas) |
+| **JPL Horizons** | NASA JPL | predict (asteroides y cometas), asteroids (observador SPHEREx) |
 
-**Reglas:** GET (salvo `POST /api/asteroids/predict`, el modelo ML), sin autenticación, CORS abierto. Coordenadas en grados (ICRS/J2000); radio, fov y apertura
+**Reglas:** GET (salvo `POST /api/asteroids/predict-from-current`), sin autenticación, CORS abierto. Coordenadas en grados (ICRS/J2000); radio, fov y apertura
 en segundos de arco. Timeout 10 s por fuente externa con 1 reintento. Caché 24 h (coordenadas redondeadas a 1″).
 Si falla solo una de las fuentes pedidas → 200 con `partial: true`.
 
-**Procesos lentos** (`sequence`, `stack`, `spectrum`, `predict`): 200 si el resultado está en caché; si no,
+**Procesos lentos** (`sequence`, `stack`, `spectrum`, `predict`, `asteroids/predict-from-current`, `l2`, `cube`): 200 si el resultado está en caché; si no,
 **202 + Job** → consultar `GET /api/jobs/{id}` cada `poll_after_ms` hasta `done` o `failed`.
 
 **Errores:** siempre `{"error": {"code", "message"}}`.
@@ -64,13 +64,26 @@ app = FastAPI(
         {"name": "Imágenes", "description": "Imágenes de SPHEREx: metadatos, secuencia (blink), PNG, apilado y resta (IRSA)"},
         {"name": "Trabajos", "description": "Estado de los procesos lentos (patrón 202 + trabajo)"},
         {"name": "Análisis", "description": "Espectro, predicción de posiciones y overlays (IRSA, SIMBAD, Horizons, Gaia, WISE)"},
-        {"name": "Asteroides (ML)", "description": "Predicción EXPERIMENTAL de posición con un LSTM (ONNX) a partir de 3 observaciones Gaia"},
+        {"name": "L2 y cubo all-sky", "description": "Pipeline SphereX: L2 completo (raw, color, clic → RA/Dec + brillo) y cubo all-sky (102 canales, 6 canales, espectro, 3D)"},
+        {"name": "Asteroides", "description": "Dónde estará un asteroide (JPL Horizons, observador SPHEREx) y en qué píxel de la imagen"},
         {"name": "Sistema", "description": "Salud de la API y de las APIs externas"},
     ],
 )
 
 errors.install(app)
 app.middleware("http")(rate_limit_middleware)
+
+_access = logging.getLogger("skyapi.clientes")
+
+
+@app.middleware("http")
+async def log_browser_origin(request, call_next):
+    """Registra desde qué página (Origin) llama cada navegador: identifica al Frontend aunque Docker oculte la IP."""
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin and request.url.path.startswith("/api/") and request.method != "OPTIONS":
+        _access.info("origen=%s %s %s → %s", origin, request.method, request.url.path, response.status_code)
+    return response
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
@@ -104,14 +117,15 @@ app.include_router(catalogs.router)
 app.include_router(images.router)
 app.include_router(analysis.router)
 app.include_router(asteroids.router)
+app.include_router(products.router)
 app.include_router(system.router)
 
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root():
     return RedirectResponse("/docs")
 
 
-@app.get("/healthz", include_in_schema=False)
+@app.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
 async def healthz():
     return {"ok": True}

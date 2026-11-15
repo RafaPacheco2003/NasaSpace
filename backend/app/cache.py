@@ -59,9 +59,14 @@ async def cached(k: str, fetch: Callable[[], Awaitable[Any]], ttl: int | None = 
 
 async def singleflight(k: str, fn: Callable[[], Awaitable[Any]]) -> Any:
     """Evita trabajo duplicado: si ya hay una ejecución con la misma clave, espera su resultado."""
-    fut = _inflight.get(k)
-    if fut is not None:
-        return await asyncio.shield(fut)
+    while (fut := _inflight.get(k)) is not None:
+        try:
+            return await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # nos cancelaron a nosotros
+            # Se canceló el que descargaba (trabajo pausado): este toma el relevo.
     loop = asyncio.get_running_loop()
     fut = loop.create_future()
     _inflight[k] = fut
@@ -69,6 +74,9 @@ async def singleflight(k: str, fn: Callable[[], Awaitable[Any]]) -> Any:
         result = await fn()
         fut.set_result(result)
         return result
+    except asyncio.CancelledError:
+        fut.cancel()
+        raise
     except BaseException as e:
         fut.set_exception(e)
         fut.exception()  # marca la excepción como recuperada

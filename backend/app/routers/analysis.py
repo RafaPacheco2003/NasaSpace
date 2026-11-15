@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api")
 
 @router.get("/jobs/{job_id}", tags=["Trabajos"], summary="Estado de un trabajo",
             responses={200: {"model": JobSchema, "description": "Con status=done trae result; con failed trae error"}, **responses(None, 404)})
-async def get_job(job_id: str = Path(..., pattern=r"^[a-z]{3}_[0-9a-f]{6,40}$")):
+async def get_job(job_id: str = Path(..., pattern=r"^[a-z0-9]{3}_[0-9a-f]{6,40}$")):
     """**Para qué sirve:** consultar el progreso de un proceso lento (`progress`, `eta_s`, `stage`,
     `queue_position`) cada `poll_after_ms` hasta `done` (resultado en `result`) o `failed` (`error`).
     Sin API externa."""

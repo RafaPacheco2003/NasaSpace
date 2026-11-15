@@ -2,7 +2,11 @@
 
 - El id es determinista (hash de la consulta): la misma consulta devuelve el mismo trabajo.
 - Como máximo MAX_CONCURRENT_JOBS corren a la vez; el resto espera en cola (queue_position).
-- Al terminar, el resultado se guarda en la caché (24 h): la siguiente petición igual recibe 200.
+  Las descargas pesadas (cubo, L2) además se limitan a MAX_HEAVY_JOBS para que no acaparen los lugares.
+- Trabajos huérfanos: si nadie consulta un trabajo (ni lo vuelve a pedir) durante JOB_ORPHAN_QUEUED_S (en cola)
+  o JOB_ORPHAN_RUNNING_S (corriendo), se PAUSA: libera su lugar. Si alguien lo vuelve a consultar o pedir, se
+  reanuda solo con el mismo id (lo ya descargado sigue en caché). Para el cliente es transparente.
+- Al terminar, el resultado se guarda en la caché (RESULT_TTL_S, 7 días): la siguiente petición igual recibe 200.
 - Los trabajos viven en memoria JOB_TTL_S; después /api/jobs/{id} usa la caché o responde 404.
 
 Nota: el estado vive en memoria → ejecutar uvicorn con UN solo worker (ver Dockerfile).
@@ -23,7 +27,9 @@ from .errors import APIError, UpstreamError, upstream_failure
 
 log = logging.getLogger("skyapi.jobs")
 
-PREFIX_KIND = {"seq": "sequence", "stk": "stack", "prd": "predict", "spc": "spectrum"}
+HEAVY_KINDS = {"cube", "l2"}
+
+PREFIX_KIND = {"seq": "sequence", "stk": "stack", "prd": "predict", "spc": "spectrum", "l2p": "l2", "cub": "cube"}
 
 
 def job_id(prefix: str, params: dict) -> str:
@@ -48,6 +54,9 @@ class Job:
         self.result: dict | None = None
         self.error: dict | None = None
         self.task: asyncio.Task | None = None
+        self.fn: Callable[["Job"], Awaitable[dict]] | None = None
+        self.last_seen = time.time()   # última vez que alguien lo pidió o consultó
+        self.paused = False
         self.p_ref: float | None = None  # progreso/tiempo de referencia para estimar la velocidad
         self.t_ref: float | None = None
 
@@ -65,7 +74,9 @@ class JobManager:
         self.jobs: dict[str, Job] = {}
         self.queue: list[str] = []
         self._sem: asyncio.Semaphore | None = None
+        self._heavy: asyncio.Semaphore | None = None
         self._durations: dict[str, list[float]] = {}
+        self.paused_total = 0
 
     @property
     def sem(self) -> asyncio.Semaphore:
@@ -73,14 +84,54 @@ class JobManager:
             self._sem = asyncio.Semaphore(settings.max_concurrent_jobs)
         return self._sem
 
+    @property
+    def heavy(self) -> asyncio.Semaphore:
+        if self._heavy is None:
+            self._heavy = asyncio.Semaphore(max(1, settings.max_heavy_jobs))
+        return self._heavy
+
     def _expire(self) -> None:
         now = time.time()
         for jid in [j.id for j in self.jobs.values() if j.finished and now - j.finished > settings.job_ttl_s]:
             self.jobs.pop(jid, None)
+        for jid in [j.id for j in self.jobs.values() if j.paused and now - j.last_seen > settings.job_ttl_s]:
+            self.jobs.pop(jid, None)
+        self._pause_orphans(now)
+
+    def _pause_orphans(self, now: float) -> None:
+        """Pausa los trabajos que nadie espera: liberan su lugar en la cola / el semáforo."""
+        for job in list(self.jobs.values()):
+            if job.paused or job.task is None or job.task.done():
+                continue
+            limit = settings.job_orphan_queued_s if job.status == "queued" else settings.job_orphan_running_s
+            if limit and now - job.last_seen > limit:
+                log.info("Trabajo %s pausado: nadie lo consulta desde hace %.0f s (%s)", job.id, now - job.last_seen, job.status)
+                job.paused = True
+                job.task.cancel()
+                self.paused_total += 1
+
+    def _start(self, job: Job) -> None:
+        job.status = "queued"
+        job.stage = "En cola"
+        job.paused = False
+        job.p_ref = job.t_ref = None
+        if job.id not in self.queue:
+            self.queue.append(job.id)
+        assert job.fn is not None
+        job.task = asyncio.create_task(self._run(job, job.fn))
+
+    def _touch(self, job: Job) -> None:
+        job.last_seen = time.time()
+        if job.paused and job.fn is not None:
+            log.info("Trabajo %s reanudado", job.id)
+            self._start(job)
 
     def get(self, jid: str) -> Job | None:
         self._expire()
-        return self.jobs.get(jid)
+        job = self.jobs.get(jid)
+        if job is not None:
+            self._touch(job)
+        return job
 
     def submit(self, jid: str, kind: str, fn: Callable[[Job], Awaitable[dict]]) -> Job:
         self._expire()
@@ -88,29 +139,50 @@ class JobManager:
         if job is not None:
             retry = job.status == "failed" and job.finished and time.time() - job.finished > settings.failed_job_retry_s
             if not retry:
+                self._touch(job)
                 return job
         job = Job(jid, kind)
+        job.fn = fn
         self.jobs[jid] = job
-        self.queue.append(jid)
-        job.task = asyncio.create_task(self._run(job, fn))
+        self._start(job)
         return job
 
     async def _run(self, job: Job, fn: Callable[[Job], Awaitable[dict]]) -> None:
+        heavy = self.heavy if job.kind in HEAVY_KINDS else None
         try:
-            async with self.sem:
-                if job.id in self.queue:
-                    self.queue.remove(job.id)
-                job.status = "running"
-                job.started = time.time()
-                job.stage = "Iniciando"
-                result = await fn(job)
+            if heavy is not None:
+                job.stage = "En cola (otra descarga grande en curso)" if heavy.locked() else job.stage
+                await heavy.acquire()   # espera SIN ocupar un lugar general
+            try:
+                async with self.sem:
+                    if job.id in self.queue:
+                        self.queue.remove(job.id)
+                    job.status = "running"
+                    job.started = time.time()
+                    job.stage = "Iniciando"
+                    result = await fn(job)
+            finally:
+                if heavy is not None:
+                    heavy.release()
             job.result = result
             job.progress = 1.0
             job.stage = "Listo"
             job.status = "done"
-            cset(result_key(job.id), result)
+            cset(result_key(job.id), result, settings.result_ttl_s)
             self._durations.setdefault(job.kind, []).append(time.time() - (job.started or job.created))
             self._durations[job.kind] = self._durations[job.kind][-20:]
+        except asyncio.CancelledError:
+            if asyncio.current_task() is not job.task:
+                return  # tarea vieja de un trabajo ya reanudado: no tocar su estado
+            if not job.paused:
+                raise
+            # Pausado por huérfano: vuelve a "queued" y espera a que alguien lo consulte (ver _touch).
+            job.status = "queued"
+            job.stage = "En pausa (nadie lo consultaba)"
+            job.started = None
+            if job.id in self.queue:
+                self.queue.remove(job.id)
+            return
         except APIError as e:
             job.error = e.payload()
             job.status = "failed"
@@ -122,11 +194,18 @@ class JobManager:
             job.error = {"code": "internal_error", "message": f"Error interno: {type(e).__name__}: {e}"[:300]}
             job.status = "failed"
         finally:
-            job.finished = time.time()
-            if job.id in self.queue:
-                self.queue.remove(job.id)
-            if job.status == "failed":
-                job.stage = "Falló"
+            if asyncio.current_task() is job.task and not job.paused:  # (pausado/reanudado: no tocar)
+                job.finished = time.time()
+                if job.id in self.queue:
+                    self.queue.remove(job.id)
+                if job.status == "failed":
+                    job.stage = "Falló"
+
+    def summary(self) -> dict:
+        act = [j for j in self.jobs.values() if not j.paused and j.task is not None and not j.task.done()]
+        return {"running": sum(j.status == "running" for j in act), "queued": sum(j.status == "queued" for j in act),
+                "paused_now": sum(j.paused for j in self.jobs.values()), "paused_total": self.paused_total,
+                "max_concurrent": settings.max_concurrent_jobs, "max_heavy": settings.max_heavy_jobs}
 
     def queue_position(self, job: Job) -> int:
         if job.status != "queued" or job.id not in self.queue:

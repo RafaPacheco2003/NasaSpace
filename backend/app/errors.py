@@ -17,7 +17,6 @@ STATUS_CODES = {
     429: "rate_limited",
     500: "internal_error",
     502: "upstream_error",
-    503: "model_unavailable",
     504: "upstream_timeout",
 }
 

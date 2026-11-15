@@ -48,7 +48,7 @@ def client_ip(request: Request) -> str:
 
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
-    if request.method == "OPTIONS" or settings.rate_limit_per_min <= 0 or not path.startswith("/api/") or path.startswith(EXEMPT_PREFIXES):
+    if request.method == "OPTIONS" or settings.rate_limit_per_min <= 0 or not path.startswith("/api/") or path.startswith(EXEMPT_PREFIXES) or path.endswith(".png"):
         return await call_next(request)
     ok, retry = limiter.check(client_ip(request))
     if not ok:

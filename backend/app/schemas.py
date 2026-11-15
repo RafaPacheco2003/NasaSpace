@@ -215,7 +215,7 @@ class Job(BaseModel):
                         "eta_s": 9, "stage": "Descargando frames 3/6", "queue_position": 0, "poll_after_ms": 800,
                         "created_at": "2026-11-14T17:34:13Z", "result": None, "error": None})
     id: str = Field(description="Determinista: la misma consulta → el mismo id")
-    kind: Literal["sequence", "stack", "predict", "spectrum"]
+    kind: Literal["sequence", "stack", "predict", "spectrum", "asteroid", "l2", "cube"]
     status: Literal["queued", "running", "done", "failed"]
     progress: float = Field(ge=0, le=1)
     eta_s: Optional[int] = Field(None, description="Segundos estimados restantes")
@@ -313,53 +313,89 @@ class SourceStatus(BaseModel):
     last_error: Optional[str] = None
 
 
-class ModelStatus(BaseModel):
-    loaded: bool
-    file: Optional[str] = None
-    error: Optional[str] = None
+# --- Asteroides (JPL Horizons + píxel) ------------------------------------------------
+
+class MjdObservation(BaseModel):
+    mjd_utc: float = Field(description="Fecha de la observación en MJD UTC (la de date_obs de SPHEREx)")
+    ra: float = Field(ge=0, lt=360, description="Grados ICRS")
+    dec: float = Field(ge=-90, le=90, description="Grados ICRS")
 
 
-# --- Asteroides (modelo ONNX) -----------------------------------------------------
-
-class AsteroidObservation(BaseModel):
-    """Una posición observada. Indicar `epoch` (escala Gaia) **o** `time` (ISO UTC), no ambos."""
-    epoch: Optional[float] = Field(None, description="Días TCB desde JD 2455197.5 (columna `epoch` de Gaia SSO). NO es Unix ni año.")
-    time: Optional[str] = Field(None, description="Alternativa a epoch: fecha ISO 8601 UTC; la API la convierte a epoch Gaia.")
-    ra: float = Field(ge=0, lt=360, description="Ascensión recta en grados (ICRS)")
-    dec: float = Field(ge=-90, le=90, description="Declinación en grados (ICRS)")
+class View(BaseModel):
+    """Geometría del PNG que muestra el Frontend: los mismos ra, dec, fov, size de /api/sequence o png_url."""
+    ra: float = Field(ge=0, lt=360)
+    dec: float = Field(ge=-90, le=90)
+    fov: float = Field(ge=10, le=3600, description="Segundos de arco")
+    size: int = Field(ge=64, le=1024, description="Píxeles")
 
 
-class AsteroidForecastRequest(BaseModel):
+class PixelResult(BaseModel):
+    x: Optional[float] = Field(None, description="Desde el borde IZQUIERDO, píxeles continuos (centro del PNG = size/2)")
+    y_top: Optional[float] = Field(None, description="Desde el borde SUPERIOR")
+    inside_image: bool = Field(description="false → la posición cae fuera del PNG mostrado: no dibujar")
+    image_width: int
+    image_height: int
+    image_id: Optional[str] = None
+    image_date_obs: Optional[str] = None
+    in_frame_footprint: Optional[bool] = Field(None, description="Si la exposición image_id tiene datos en ese punto")
+
+
+class CurrentForecastRequest(BaseModel):
+    model_config = _ex({"asteroid_id": 433, "current_observation": {"mjd_utc": 60900.5, "ra": 24.928, "dec": 25.248},
+                        "horizon_days": 1.5, "image_id": None, "view": None})
+    asteroid_id: int = Field(gt=0, description="Número MPC del asteroide (433 = Eros). Se usa en JPL Horizons")
+    current_observation: MjdObservation = Field(description="T3: la posición marcada ahora (clic sobre el frame) y su fecha")
+    horizon_days: float = Field(gt=0, le=30, description="Días hacia adelante desde T3 (0 < h ≤ 30)")
+    image_id: Optional[str] = Field(None, max_length=80)
+    view: Optional[View] = None
+
+
+class TrackPoint(BaseModel):
+    mjd_utc: float
+    time: str
+    ra: float
+    dec: float
+    sigma_arcsec: Optional[float] = Field(None, description="Incertidumbre 3σ de Horizons (RA/Dec), si la da")
+    pixel: Optional[PixelResult] = Field(None, description="Solo si se mandó view")
+
+
+class AsteroidClick(BaseModel):
+    mjd_utc: float
+    time: str
+    ra: float = Field(description="Posición marcada por el usuario")
+    dec: float
+    ephemeris_ra: float = Field(description="Posición de JPL Horizons en esa fecha")
+    ephemeris_dec: float
+    offset_arcsec: float = Field(description="Distancia entre el clic y Horizons (≤ 60″ o 422)")
+    pixel: Optional[PixelResult] = None
+
+
+class CurrentForecastResult(BaseModel):
     model_config = _ex({
-        "asteroid_id": 1,
-        "observations": [
-            {"epoch": 1800.0, "ra": 40.0, "dec": 10.0},
-            {"epoch": 1800.5, "ra": 40.1, "dec": 10.1},
-            {"epoch": 1801.5, "ra": 40.3, "dec": 10.2},
-        ],
-        "horizon_days": 1.5,
-    })
-    asteroid_id: Optional[int] = Field(None, description="Solo identificador; no entra al modelo")
-    observations: list[AsteroidObservation] = Field(description="Exactamente 3, del mismo asteroide, ordenadas por fecha; huecos ≤ 3 días")
-    horizon_days: float = Field(gt=0, le=3, description="Días desde la última observación (0 < h ≤ 3)")
-
-
-class AsteroidForecastResult(BaseModel):
-    model_config = _ex({
-        "asteroid_id": 1, "predicted_ra_deg": 40.652007, "predicted_dec_deg": 10.217897, "forecast_epoch": 1803.0,
-        "forecast_time": "2014-12-08T23:58:34.254Z", "horizon_days": 1.5, "status": "experimental",
-        "frame": "ICRS, geometría Gaia-céntrica (la del entrenamiento)",
-        "time_scale": "epoch = días TCB desde JD 2455197.5 (Gaia)",
-    })
-    asteroid_id: Optional[int] = None
+        "asteroid_id": 433, "target": "433 Eros (A898 PA)", "method": "horizons", "observer": "500@-163182",
+        "current_observation": {"mjd_utc": 60900.5, "time": "2025-08-27T12:00:00.000Z", "ra": 24.928, "dec": 25.248,
+                                "ephemeris_ra": 24.9281, "ephemeris_dec": 25.2479, "offset_arcsec": 0.5, "pixel": None},
+        "predicted_ra_deg": 25.41, "predicted_dec_deg": 25.6, "sigma_arcsec": 0.01, "forecast_mjd_utc": 60902.0,
+        "forecast_time": "2025-08-29T00:00:00.000Z", "horizon_days": 1.5,
+        "motion": {"arcsec_per_hour": 58.2, "position_angle_deg": 52.1}, "image_id": None, "pixel": None,
+        "track": [], "warnings": [], "status": "ephemeris"})
+    asteroid_id: int
+    target: str = Field(description="Nombre según JPL Horizons")
+    method: Literal["horizons"]
+    observer: str = Field(description="500@-163182 = SPHEREx; 500@399 = geocentro (si no hay órbita de SPHEREx)")
+    current_observation: AsteroidClick
     predicted_ra_deg: float
     predicted_dec_deg: float
-    forecast_epoch: float = Field(description="Epoch Gaia de la predicción = última epoch + horizon_days")
-    forecast_time: str = Field(description="La misma fecha en ISO UTC")
+    sigma_arcsec: Optional[float] = None
+    forecast_mjd_utc: float
+    forecast_time: str
     horizon_days: float
-    status: Literal["experimental"]
-    frame: str
-    time_scale: str
+    motion: dict = Field(description="arcsec_per_hour y position_angle_deg (desde el norte hacia el este)")
+    image_id: Optional[str] = None
+    pixel: Optional[PixelResult] = Field(None, description="Píxel de la predicción en la vista (si se mandó view)")
+    track: list[TrackPoint] = Field(description="9 posiciones de T3 a la predicción, para dibujar la trayectoria")
+    warnings: list[str]
+    status: Literal["ephemeris"]
 
 
 class StatusResult(BaseModel):
@@ -372,7 +408,7 @@ class StatusResult(BaseModel):
     data_release: str
     spherex_mode: Optional[str] = None
     sources: dict[str, SourceStatus] = Field(description="spherex, simbad, ned, gaia, wise, horizons")
-    models: Optional[dict[str, ModelStatus]] = Field(None, description="Modelos de ML locales (asteroid_lstm)")
+    jobs: Optional[dict] = Field(None, description="Cola de trabajos: running, queued, paused_now, paused_total")
 
 
 # --- Bloques de respuestas para los decoradores ---------------------------------
@@ -381,9 +417,9 @@ ERR = {
     400: {"model": Error, "description": "Falta un parámetro, coordenadas fuera de rango o límites excedidos"},
     404: {"model": Error, "description": "No se encontró el nombre, el frame o el trabajo (expirado)"},
     429: {"model": Error, "description": "Demasiadas peticiones desde la misma IP (cabecera Retry-After)"},
+    422: {"model": Error, "description": "Datos insuficientes o incompatibles (insufficient_observations, identity_mismatch, sequence_incompatible)"},
     500: {"model": Error, "description": "Error interno"},
     502: {"model": Error, "description": "Fallaron todas las fuentes pedidas"},
-    503: {"model": Error, "description": "El modelo ONNX no está disponible (faltan archivos o no cargó)"},
     504: {"model": Error, "description": "Se agotó el tiempo en todas las fuentes pedidas"},
 }
 PNG = {200: {"content": {"image/png": {}}, "description": "Imagen PNG (TAN, norte arriba, este a la izquierda)"}}

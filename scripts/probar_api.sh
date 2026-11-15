@@ -76,6 +76,26 @@ run_job() {
 }
 r() { jq -r "$1" "$TMP/result" 2>/dev/null; }
 
+# Igual que run_job pero la primera llamada es POST con cuerpo JSON
+run_post_job() {
+  local path="$1" body="$2" t0=$SECONDS
+  req "$path" -X POST -H "Content-Type: application/json" -d "$body"
+  if [ "$CODE" = "200" ]; then cp "$TMP/body" "$TMP/result"; info "200 directo (resultado en caché)"; return 0; fi
+  if [ "$CODE" != "202" ]; then info "HTTP $CODE $(err)"; return 1; fi
+  local id; id=$(j .id)
+  info "202 → trabajo $id (kind=$(j .kind))"
+  while :; do
+    case "$(j .status)" in
+      done)   printf "\r%80s\r" ""; jq '.result // .' "$TMP/body" > "$TMP/result"; info "done en $((SECONDS-t0)) s"; return 0 ;;
+      failed) printf "\r%80s\r" ""; jq '.error' "$TMP/body" > "$TMP/result"; info "failed: $(jq -r '"\(.error.code): \(.error.message)"' "$TMP/body" | head -c 200)"; return 2 ;;
+    esac
+    printf "\r    ${Y}… %-38s %3s%%${N}   " "$(j .stage | cut -c1-38)" "$(jq -r '(.progress*100|floor)' "$TMP/body")"
+    sleep 1
+    [ $((SECONDS-t0)) -gt 300 ] && { echo; info "timeout de 5 min"; return 1; }
+    req "/api/jobs/$id"
+  done
+}
+
 png_ok() {  # comprueba que el archivo es un PNG de NxN
   local f="$1" n="$2"
   [ "$(head -c 8 "$f" | xxd -p)" = "89504e470d0a1a0a" ] || return 1
@@ -174,23 +194,18 @@ req "/api/jobs/seq_ffffffffffff"
 [ "$CODE" = "404" ] && ok "Trabajo inexistente → 404" "$(j .error.message)" || fail "jobs 404" "HTTP $CODE"
 
 # =============================================================================
-titulo "Asteroides (ML) — POST /api/asteroids/predict  (LSTM ONNX local)"
+titulo "Asteroides — POST /api/asteroids/predict-from-current  (JPL Horizons, observador SPHEREx)"
 # =============================================================================
-OBS='[{"epoch":1800.0,"ra":40.0,"dec":10.0},{"epoch":1800.5,"ra":40.1,"dec":10.1},{"epoch":1801.5,"ra":40.3,"dec":10.2}]'
-ast() { req "/api/asteroids/predict" -X POST -H "Content-Type: application/json" -d "$1"; }
-ast "{\"asteroid_id\":1,\"observations\":$OBS,\"horizon_days\":1.5}"
-if [ "$CODE" = "200" ]; then
-  ok "Pronóstico a 1.5 días → RA $(j .predicted_ra_deg | cut -c1-9), Dec $(j .predicted_dec_deg | cut -c1-9)" "forecast_epoch=$(j .forecast_epoch) · $(j .forecast_time) · status=$(j .status)"
-  RA15=$(j .predicted_ra_deg)
-  ast "{\"observations\":$OBS,\"horizon_days\":3}"
-  [ "$CODE" = "200" ] && [ "$(j .predicted_ra_deg)" != "$RA15" ] && ok "La salida cambia con horizon_days (3 días → RA $(j .predicted_ra_deg | cut -c1-9))" || fail "horizonte" "HTTP $CODE"
-else
-  fail "asteroids/predict" "HTTP $CODE $(err)"
-fi
-ast '{"observations":[{"epoch":1800.5,"ra":40.1,"dec":10.1},{"epoch":1800.0,"ra":40.0,"dec":10.0},{"epoch":1801.5,"ra":40.3,"dec":10.2}],"horizon_days":1.5}'
-[ "$CODE" = "400" ] && ok "Observaciones desordenadas → 400" "$(err)" || fail "desordenadas" "HTTP $CODE"
-ast "{\"observations\":$OBS,\"horizon_days\":-1}"
-[ "$CODE" = "400" ] && ok "Horizonte negativo → 400" "$(err)" || fail "horizonte negativo" "HTTP $CODE"
+LEO='{"asteroid_id":3000,"current_observation":{"mjd_utc":61280.27835825572,"ra":60.39039387599737,"dec":20.06447024678794},"horizon_days":0.5,"view":{"ra":60.3904,"dec":20.0645,"fov":1200,"size":512}}'
+astp() { req "/api/asteroids/predict-from-current" -X POST -H "Content-Type: application/json" -d "$1"; }
+astp "$LEO"
+if [ "$CODE" = "200" ] && [ "$(j .method)" = "horizons" ]; then
+  ok "3000 Leonardo → $(j .forecast_time | cut -c1-16): RA $(j .predicted_ra_deg | cut -c1-9), Dec $(j .predicted_dec_deg | cut -c1-9)" "clic a $(j .current_observation.offset_arcsec)″ de Horizons · $(j .motion.arcsec_per_hour)″/h · $(j '.track|length') puntos de trayectoria · píxel actual ($(j .current_observation.pixel.x), $(j .current_observation.pixel.y_top))"
+else fail "predict-from-current Leonardo" "HTTP $CODE $(err)"; fi
+astp '{"asteroid_id":3000,"current_observation":{"mjd_utc":61280.27835825572,"ra":61.0,"dec":20.06},"horizon_days":0.5}'
+[ "$CODE" = "422" ] && [ "$(j .error.code)" = "identity_mismatch" ] && ok "Clic que no es Leonardo → 422 identity_mismatch" "$(err | cut -c1-110)" || fail "identity_mismatch" "HTTP $CODE"
+astp '{"asteroid_id":3000,"current_observation":{"mjd_utc":61280.27,"ra":60.39,"dec":20.06},"horizon_days":31}'
+[ "$CODE" = "400" ] && ok "horizon_days > 30 → 400" "$(err | cut -c1-110)" || fail "horizonte" "HTTP $CODE"
 
 # =============================================================================
 if [ "$RAPIDO" = "0" ]; then
@@ -251,6 +266,30 @@ else fail "predict Barnard"; fi
 if run_job "/api/predict?ra=0&dec=0&name=Ceres&date_from=2025-06-01&date_to=2025-07-01"; then
   ok "Ceres → method=$(r .method), $(r '.positions|length') posiciones" "primera: $(r '.positions[0].date[0:10]') $(r '.positions[0].ra'), $(r '.positions[0].dec')"
 else fail "predict Ceres"; fi
+fi
+
+if [ "$RAPIDO" = "0" ]; then
+titulo "L2 completo y cubo all-sky  (pipeline SphereX · M101)"
+if run_job "/api/l2?ra=210.80227&dec=54.34895&size=1024"; then
+  F=$(r .frame.id)
+  ok "L2 $F ($(r .frame.date_obs | cut -c1-10), D$(r .frame.detector)) · $(r .selection.candidates_total) candidatas" "target x=$(r .target.x) y=$(r .target.y) → $(r .target.brightness.value) $(r .unit) a $(r .target.wavelength_um) µm"
+  for k in raw color; do
+    curl -s -m 120 -o "$OUT/l2_$k.png" -w "%{http_code}" "$BASE/api/l2/$F/$k.png?size=1024" | grep -q 200 \
+      && png_ok "$OUT/l2_$k.png" 1024 && ok "L2 $k.png 1024×1024" || fail "L2 $k.png"
+  done
+  req "/api/l2/$F/pixel?x=$(r .target.x)&y=$(r .target.y)&size=1024"
+  [ "$CODE" = "200" ] && ok "Clic L2 → RA $(j .ra | cut -c1-10), Dec $(j .dec | cut -c1-9)" "$(j .brightness.value) MJy/sr (−zodi $(j .brightness.value_minus_zodi), ±$(j .brightness.error)) λ=$(j .wavelength_um) µm flags=$(j '.flags|join(",")')" || fail "clic L2" "HTTP $CODE"
+else fail "L2 completo"; fi
+if run_job "/api/cube?ra=210.80227&dec=54.34895"; then
+  T=$(r .tile.id)
+  ok "Cubo $T $(r '.shape|join("×")') ($(r .tile.size_mb) MB) · $(r '.channels|length') canales" "seis: $(r '[.six_channels[]|"\(.channel):\(.wavelength_um*1000|round/1000)µm"]|join(" ")')"
+  curl -s -m 60 -o "$OUT/cube_c40.png" -w "%{http_code}" "$BASE/api/cube/$T/channel/40.png" | grep -q 200 && png_ok "$OUT/cube_c40.png" 512 \
+    && ok "Canal 40 PNG 512×512" || fail "canal PNG"
+  req "/api/cube/$T/channels?set=six"; [ "$(j .count)" = "6" ] && ok "channels?set=six → 6" || fail "six"
+  req "/api/cube/$T/pixel?x=$(r .target.x)&y=$(r .target.y)"
+  [ "$CODE" = "200" ] && ok "Clic cubo → espectro de $(j '.spectrum|length') canales ($(j .valid_channels) válidos)" "canal 40: $(j '.spectrum[39].brightness') $(j .unit)" || fail "clic cubo"
+  curl -s -m 120 -o "$OUT/cube_samples.png" -w "%{http_code}" "$BASE/api/cube/$T/samples.png?ra=210.80227&dec=54.34895" | grep -q 200 && ok "samples.png (6 canales del script)" || fail "samples.png"
+else fail "cubo all-sky"; fi
 fi
 
 # =============================================================================

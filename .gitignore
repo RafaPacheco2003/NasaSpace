@@ -1,2 +1,4 @@
 salida_pruebas/
 .env
+.DS_Store
+entrega_frontend.zip

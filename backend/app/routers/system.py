@@ -9,8 +9,8 @@ from fastapi import APIRouter
 from ..config import settings
 from ..errors import UpstreamError
 from ..http import health, request
+from ..jobs import jobs
 from ..schemas import StatusResult
-from ..services.asteroid_forecast import forecaster
 from ..utils import json_response
 
 router = APIRouter(prefix="/api", tags=["Sistema"])
@@ -61,5 +61,5 @@ async def status():
         "data_release": settings.data_release + (" [MODO MOCK: datos sintéticos]" if settings.spherex_mode == "mock" else ""),
         "spherex_mode": settings.spherex_mode,
         "sources": sources,
-        "models": {"asteroid_lstm": forecaster.info()},
+        "jobs": jobs.summary(),
     })

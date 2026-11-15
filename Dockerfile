@@ -16,7 +16,6 @@ COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY backend/app ./app
-COPY backend/models ./models
 COPY backend/tests ./tests
 COPY backend/pytest.ini .
 

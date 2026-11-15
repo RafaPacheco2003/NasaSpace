@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from dataclasses import dataclass
 
 
@@ -64,9 +63,14 @@ class Settings:
     wise_catalog: str = _str("WISE_CATALOG", "allwise").lower()
     overlay_max_sources: int = _int("OVERLAY_MAX_SOURCES", 5000)
 
-    # --- Modelo ONNX (predicción experimental de asteroides) -------------
-    # Carpeta con asteroid_lstm.onnx + preprocessing.json
-    model_dir: str = _str("MODEL_DIR", str(Path(__file__).resolve().parent.parent / "models"))
+    # --- Asteroides (POST /api/asteroids/predict-from-current, JPL Horizons) ---
+    # Observador de Horizons: SPHEREx (-163182). Desde el geocentro la posición difiere ~1 píxel para asteroides.
+    horizons_spherex_center: str = _str("HORIZONS_SPHEREX_CENTER", "500@-163182")
+    asteroid_identity_tol_arcsec: float = _float("ASTEROID_IDENTITY_TOL_ARCSEC", 60)   # clic vs efeméride
+
+    # --- Productos completos del pipeline (L2 entero ≈ 65 MB, tesela de cubo ≈ 320 MB) ---
+    product_cache_gb: float = _float("PRODUCT_CACHE_GB", 3)          # disco máximo para FITS completos (LRU)
+    product_download_workers: int = _int("PRODUCT_DOWNLOAD_WORKERS", 4)  # conexiones con rangos HTTP (1–8)
 
     # --- Red / tiempos --------------------------------------------------
     external_timeout_s: float = _float("EXTERNAL_TIMEOUT_S", 10)
@@ -76,10 +80,14 @@ class Settings:
     # --- Caché ------------------------------------------------------------
     cache_dir: str = _str("CACHE_DIR", "/data/cache")
     cache_ttl_s: int = _int("CACHE_TTL_S", 24 * 3600)
+    result_ttl_s: int = _int("RESULT_TTL_S", 7 * 24 * 3600)           # resultados de trabajos (DR1 no cambia)
     cache_size_limit_gb: float = _float("CACHE_SIZE_LIMIT_GB", 5)
 
     # --- Trabajos (202 + job) ---------------------------------------------
-    max_concurrent_jobs: int = _int("MAX_CONCURRENT_JOBS", 2)
+    max_concurrent_jobs: int = _int("MAX_CONCURRENT_JOBS", 4)
+    max_heavy_jobs: int = _int("MAX_HEAVY_JOBS", 1)                  # cubo/L2 (descargas de 65–320 MB) a la vez
+    job_orphan_queued_s: int = _int("JOB_ORPHAN_QUEUED_S", 30)       # en cola sin consultas → se pausa
+    job_orphan_running_s: int = _int("JOB_ORPHAN_RUNNING_S", 90)     # corriendo sin consultas → se pausa (0 = nunca)
     job_ttl_s: int = _int("JOB_TTL_S", 3600)
     failed_job_retry_s: int = _int("FAILED_JOB_RETRY_S", 30)
 

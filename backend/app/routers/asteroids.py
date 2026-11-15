@@ -1,29 +1,36 @@
-"""Asteroides (ML): POST /api/asteroids/predict — LSTM exportado a ONNX."""
+"""Asteroides: posición futura con JPL Horizons.
+
+- POST /api/asteroids/predict-from-current → el usuario marca el asteroide (T3) en el frame; Horizons da la posición
+  futura, la trayectoria y los píxeles para dibujarla. Sin modelo de IA.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.concurrency import run_in_threadpool
 
-from ..schemas import AsteroidForecastRequest, AsteroidForecastResult, responses
-from ..services.asteroid_forecast import run_forecast
+from ..schemas import CurrentForecastRequest, CurrentForecastResult, responses
+from ..services.asteroid_horizons import horizons_forecast
 from ..utils import json_response
 
-router = APIRouter(prefix="/api/asteroids", tags=["Asteroides (ML)"])
+router = APIRouter(prefix="/api/asteroids", tags=["Asteroides"])
 
 
-@router.post("/predict", summary="Posición futura de un asteroide con el LSTM (EXPERIMENTAL)",
-             responses=responses(AsteroidForecastResult, 400, 429, 500, 503))
-async def predict_asteroid(req: AsteroidForecastRequest):
-    """**Para qué sirve:** dadas **3 observaciones** del mismo asteroide (huecos ≤ 3 días) y un horizonte
-    `horizon_days` (0 < h ≤ 3), estima dónde estará (RA/Dec) con una red LSTM entrenada con
-    observaciones de **Gaia** y exportada a ONNX. Sin API externa; corre en CPU en milisegundos.
+@router.post("/predict-from-current",
+             summary="Dónde estará un asteroide (JPL Horizons) + píxeles para dibujarlo en la imagen",
+             responses=responses(CurrentForecastResult, 400, 404, 422, 429, 502))
+async def predict_from_current(req: CurrentForecastRequest):
+    """**Para qué sirve:** el usuario marca el asteroide en el frame que está viendo (T3) y da su número MPC.
 
-    **Tiempo:** `epoch` = días TCB desde JD 2455197.5 (columna `epoch` de Gaia SSO), **no** Unix ni año.
-    Si prefieres fechas normales, manda `time` (ISO UTC) en lugar de `epoch` y la API lo convierte.
+    1. **Identidad:** JPL Horizons (observador = SPHEREx, `-163182`) en la fecha de T3. Si el clic está a más de
+       60″ de la efeméride → `422 identity_mismatch`.
+    2. **Predicción:** posición en T3 + `horizon_days` (0 < h ≤ 30).
+    3. **Trayectoria:** 9 posiciones de T3 a la predicción (`track`) para dibujar la línea.
+    4. **Píxeles:** con `view` (= ra, dec, fov, size del PNG mostrado) cada posición trae `pixel.x` / `pixel.y_top`
+       desde la esquina superior izquierda e `inside_image`.
 
-    **Límites:** geometría Gaia-céntrica (no es la posición vista desde la Tierra ni desde SPHEREx),
-    sin incertidumbre calibrada y no validado fuera de 3 días. Para efemérides de verdad usar
-    `GET /api/predict` (JPL Horizons). Validación fallida → **400** con la forma de error del contrato."""
-    obs = [o.model_dump() for o in req.observations]
-    result = await run_in_threadpool(run_forecast, req.asteroid_id, obs, req.horizon_days)
-    return json_response(result)
+    Responde 200 directo (~1–2 s la primera vez, instantáneo después; con caché).
+
+    **API externa:** JPL Horizons (e IRSA solo si se manda `image_id` que no está en caché)."""
+    p = req.model_dump()
+    return json_response(await horizons_forecast(
+        asteroid_id=req.asteroid_id, current=p["current_observation"], horizon_days=req.horizon_days,
+        image_id=req.image_id, view=p["view"]))

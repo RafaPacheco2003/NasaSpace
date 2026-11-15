@@ -16,8 +16,9 @@ imágenes de la misión **SPHEREx** de la NASA (102 bandas infrarrojas, 0.75–5
    longitud de onda; ordenados por fecha sirven como **curva de luz**) con las **banderas de contaminación**.
 6. **Predice** dónde estará un objeto en cada fecha con imágenes (movimiento propio + paralaje para
    estrellas/enanas marrones, efemérides de JPL Horizons para asteroides y cometas).
-7. **Modelo ML experimental** (`POST /api/asteroids/predict`): una red LSTM exportada a ONNX pronostica la
-   posición de un asteroide a ≤ 3 días a partir de 3 observaciones tipo Gaia.
+7. **Asteroides**: el usuario marca un asteroide en la imagen y da su número; con JPL Horizons (visto desde
+   SPHEREx) comprueba que sea ese, dice dónde estará (≤ 30 días) y devuelve los **píxeles** de la trayectoria
+   para dibujarla sobre la imagen mostrada.
 
 El Frontend solo habla con esta API; la API habla con IRSA (SPHEREx, WISE), CDS (SIMBAD), NED, ESA (Gaia) y JPL.
 
@@ -26,7 +27,8 @@ El Frontend solo habla con esta API; la API habla con IRSA (SPHEREx, WISE), CDS 
 > · **Swagger**: <http://localhost:8000/docs> · **OpenAPI**: [`docs/openapi.yaml`](docs/openapi.yaml)
 > · **Probar todo**: `./scripts/probar_api.sh`
 > · **Ejemplos reales de cada servicio** (qué devuelve y para qué sirve): [`docs/EJEMPLOS_REALES.md`](docs/EJEMPLOS_REALES.md)
-> · **Modelo ML de asteroides (ONNX)**: [`docs/MODELO_ASTEROIDES.md`](docs/MODELO_ASTEROIDES.md)
+> · **Conectar el Frontend** (quitar mocks, cliente TypeScript listo): [`docs/CONECTAR_FRONTEND.md`](docs/CONECTAR_FRONTEND.md) · [`docs/frontend/skyApi.ts`](docs/frontend/skyApi.ts)
+> · **L2 completo y cubo all-sky** (raw, color, clic → RA/Dec + brillo, 102 y 6 canales): [`docs/L2_Y_CUBO.md`](docs/L2_Y_CUBO.md)
 
 ---
 
@@ -180,14 +182,12 @@ NasaSpace/
 ├── docs/
 │   ├── DOCUMENTACION_API.md       ← APIs externas + referencia de cada endpoint
 │   ├── EJEMPLOS_REALES.md         ← cada servicio con respuesta real
-│   ├── MODELO_ASTEROIDES.md       ← integración del LSTM ONNX (POST /api/asteroids/predict)
 │   ├── openapi.json / openapi.yaml← especificación OpenAPI (Swagger) exportada
 ├── scripts/
 │   └── probar_api.sh              ← prueba todos los endpoints con curl + jq
 └── backend/
     ├── requirements.txt
     ├── .env.example
-    ├── models/                    ← asteroid_lstm.onnx + preprocessing.json (van dentro de la imagen)
     ├── app/
     │   ├── main.py                ← app FastAPI, CORS, middlewares, routers
     │   ├── config.py              ← variables de entorno y límites de validación
@@ -213,7 +213,7 @@ NasaSpace/
     │   ├── services/
     │   │   ├── imaging.py         ← secuencia y apilado/resta
     │   │   ├── analysis.py        ← espectro y predicción
-    │   │   └── asteroid_forecast.py ← modelo LSTM ONNX: preprocesamiento + inferencia
+    │   │   └── asteroid_horizons.py ← asteroides: posición futura y píxeles con JPL Horizons
     │   └── routers/               ← un archivo por grupo de endpoints del contrato
     │       ├── catalogs.py  images.py  analysis.py  asteroids.py  system.py  common.py
     └── tests/                     ← pytest (sin red: modo mock + catálogos simulados)
@@ -223,7 +223,7 @@ NasaSpace/
 
 ## Endpoints
 
-Base: `http://localhost:8000`. Todos son `GET` salvo el modelo ML (`POST /api/asteroids/predict`). Listas en query: `?a=x&a=y` **o** `?a=x,y`.
+Base: `http://localhost:8000`. Todos son `GET` salvo `POST /api/asteroids/predict-from-current`. Listas en query: `?a=x&a=y` **o** `?a=x,y`.
 
 | Endpoint | Tipo | Qué hace |
 |---|---|---|
@@ -249,15 +249,21 @@ Base: `http://localhost:8000`. Todos son `GET` salvo el modelo ML (`POST /api/as
 - Campos adicionales en respuestas: `band_exact`, `obs_id`, `vmin/vmax` por frame, `partial`/`warnings` en
   secuencia y apilado, `catalog_epoch` y `catalog_ra/dec` en overlay, `object_type` en resolve,
   `n_exposures` en espectro, `parallax_mas`/`catalog_position` en predict.
-- **`POST /api/asteroids/predict`** — predicción **experimental** de la posición de un asteroide con el LSTM
-  ONNX (3 observaciones + `horizon_days` ≤ 3 → RA/Dec). Sin API externa, ~25 ms. Todo en
-  [`docs/MODELO_ASTEROIDES.md`](docs/MODELO_ASTEROIDES.md).
+- **Asteroides (JPL Horizons)**:
+  - `POST /api/asteroids/predict-from-current` (**200 directo**): `asteroid_id` (número MPC) + la posición que marca el
+    usuario en el frame (T3) + `horizon_days` (≤ 30) → comprueba con Horizons que sea ese asteroide (≤ 60″, si no
+    `422 identity_mismatch`) y devuelve la posición futura, la trayectoria (`track`) y `pixel` (x, y) sobre la vista.
   ```bash
-  curl -s -X POST http://localhost:8000/api/asteroids/predict -H 'Content-Type: application/json' \
-    -d '{"observations":[{"epoch":1800.0,"ra":40.0,"dec":10.0},{"epoch":1800.5,"ra":40.1,"dec":10.1},{"epoch":1801.5,"ra":40.3,"dec":10.2}],"horizon_days":1.5}'
-  # → {"predicted_ra_deg": 40.652007, "predicted_dec_deg": 10.217897, "forecast_epoch": 1803.0, "status": "experimental", ...}
+  curl -s -X POST http://localhost:8000/api/asteroids/predict-from-current -H 'Content-Type: application/json' \
+    -d '{"asteroid_id":3000,"current_observation":{"mjd_utc":61280.27836,"ra":60.39039,"dec":20.06447},"horizon_days":0.5}'
+  # → {"target": "3000 Leonardo (1981 EG19)", "predicted_ra_deg": 60.5815245, "predicted_dec_deg": 20.0863899, "method": "horizons", ...}
   ```
-- `/api/status` incluye `models.asteroid_lstm.loaded` (si el modelo cargó).
+- **L2 completo y cubo all-sky** (pipeline `SphereX-pipeline`) — todo en [`docs/L2_Y_CUBO.md`](docs/L2_Y_CUBO.md):
+  - `GET /api/l2?ra&dec&date_from&date_to` (**202**) → L2 completo de la exposición elegida;
+    `GET /api/l2/{id}/raw.png`, `/color.png`, `/pixel?x&y` (clic → RA/Dec + brillo MJy/sr, zodiacal, error, λ, banderas).
+  - `GET /api/cube?ra&dec` (**202**) → tesela all-sky de 102 canales; `GET /api/cube/{tile}/channels?set=all|six`,
+    `/channel/{n}.png`, `/pixel?x&y` (espectro de 102 canales), `/samples.png`, `/preview3d`, `/cube3d.png`.
+- `/api/status` incluye `jobs` (estado de la cola de trabajos).
 - `/healthz` (healthcheck de Docker) y `/` → redirige a `/docs`.
 
 ### Ejemplos
@@ -327,7 +333,12 @@ curl "http://localhost:8000/api/predict?ra=269.446&dec=4.770&name=Barnard's%20st
 }
 ```
 
-- Como mucho `MAX_CONCURRENT_JOBS` (2) corren a la vez; el resto espera con `queue_position` ≥ 1.
+- Como mucho `MAX_CONCURRENT_JOBS` (4) corren a la vez; el resto espera con `queue_position` ≥ 1. Las descargas
+  pesadas (cubo, L2) además van de `MAX_HEAVY_JOBS` (1) en 1, para que no acaparen los lugares.
+- **Trabajos huérfanos:** si nadie consulta un trabajo durante `JOB_ORPHAN_QUEUED_S` (30 s, en cola) o
+  `JOB_ORPHAN_RUNNING_S` (90 s, corriendo), se pausa y libera su lugar. Si alguien vuelve a consultarlo o pedirlo,
+  se reanuda solo con el mismo id (lo descargado sigue en caché). Para el cliente es transparente.
+- `/api/status` incluye `jobs`: `running`, `queued`, `paused_now`, `paused_total`.
 - `eta_s` se estima con el progreso (o con la duración media de trabajos anteriores si está en cola).
 - Los trabajos viven en memoria `JOB_TTL_S` (1 h); el resultado queda en caché 24 h. Si el trabajo ya expiró
   de memoria pero el resultado sigue en caché, `/api/jobs/{id}` lo devuelve como `done`. Si no, `404`.
@@ -544,14 +555,18 @@ Ver `backend/.env.example`. Las más importantes:
 | `SPHEREX_SEARCH_RETRIES` | `2` | Reintentos de la búsqueda SIA, con espera creciente (0.4 s, 0.8 s). |
 | `DOWNLOAD_TIMEOUT_S` | `60` | Timeout de descarga de recortes FITS. |
 | `DOWNLOAD_CONCURRENCY` | `6` | Descargas simultáneas a IRSA. |
-| `MAX_CONCURRENT_JOBS` | `2` | Trabajos lentos simultáneos (el resto en cola). |
+| `MAX_CONCURRENT_JOBS` | `4` | Trabajos lentos simultáneos (el resto en cola). |
+| `MAX_HEAVY_JOBS` | `1` | Descargas de cubo/L2 (65–320 MB) simultáneas, dentro de las anteriores. |
+| `JOB_ORPHAN_QUEUED_S` / `JOB_ORPHAN_RUNNING_S` | `30` / `90` | Segundos sin consultas para pausar un trabajo (0 = nunca). |
+| `RESULT_TTL_S` | `604800` | Vigencia de los resultados de trabajos en caché (7 días; DR1 no cambia). |
 | `MAX_SPECTRUM_FRAMES` | `600` | Máximo de exposiciones por espectro. |
 | `WISE_CATALOG` | `allwise` | `allwise` o `catwise` (CatWISE2020, mejor pm para enanas marrones). |
 | `CACHE_DIR` / `CACHE_TTL_S` / `CACHE_SIZE_LIMIT_GB` | `/data/cache` / `86400` / `5` | Caché. |
 | `JOB_TTL_S` | `3600` | Cuánto vive un trabajo terminado en memoria. |
 | `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_BURST` | `120` / `40` | Límite por IP. |
 | `TRUST_PROXY` | `false` | Usar `X-Forwarded-For` para la IP. |
-| `MODEL_DIR` | `backend/models` (`/app/models` en Docker) | Carpeta con `asteroid_lstm.onnx` + `preprocessing.json`. |
+| `PRODUCT_CACHE_GB` / `PRODUCT_DOWNLOAD_WORKERS` | `3` / `4` | Disco para L2 completos y teselas de cubo (LRU) y conexiones por descarga. |
+| `HORIZONS_SPHEREX_CENTER` / `ASTEROID_IDENTITY_TOL_ARCSEC` | `500@-163182` / `60` | Observador de Horizons (SPHEREx) y distancia máxima clic–efeméride. |
 | `SIMBAD_TAP_MIRROR` | espejo de Harvard | El reintento de SIMBAD va contra el espejo. |
 | `IRSA_GATOR_URL` | Gator de IRSA | Respaldo de WISE si el TAP de IRSA falla. |
 | URLs (`IRSA_SIA_URL`, `SIMBAD_TAP_URL`, `NED_TAP_URL`, `GAIA_TAP_URL`, `HORIZONS_URL`…) | servicios oficiales | Por si hay que usar un espejo. |
@@ -642,7 +657,7 @@ consultas son deterministas, quien abra el enlace obtiene el mismo trabajo/cach�
 
 ## Tests
 
-**Script de pruebas contra la API en marcha** (servicios reales, 32 comprobaciones, guarda los PNG en
+**Script de pruebas contra la API en marcha** (servicios reales, 49 comprobaciones, guarda los PNG en
 `./salida_pruebas/`):
 
 ```bash
@@ -659,9 +674,9 @@ docker compose run --rm api pytest -q
 Cubren: forma de los errores y mensajes de validación, 404 de rutas y trabajos, CORS, la fórmula de geometría
 del contrato contra el WCS real, propagación del movimiento propio de Barnard, `resolve` con `current`,
 `objects` parcial (200 + `partial`) y total (504), frames/coverage, el flujo completo
-secuencia → PNG → caché 200 → resta → PNG, el espectro y el modelo ONNX de asteroides
-(`tests/test_asteroids.py`: 15 tests con la lista de aceptación de la guía, incluido que el endpoint da
-exactamente lo mismo que el código de referencia).
+secuencia → PNG → caché 200 → resta → PNG, el espectro, los asteroides con Horizons simulado
+(`tests/test_asteroids_horizons.py`: predicción, trayectoria, píxeles norte arriba / este a la izquierda,
+`identity_mismatch`, 404 y validaciones) y la cola de trabajos (`tests/test_jobs.py`).
 
 ---
 

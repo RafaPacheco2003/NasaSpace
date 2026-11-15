@@ -78,7 +78,7 @@ docker compose exec -T api python -c "import json,sys,yaml; print(yaml.safe_dump
 BASE_URL=https://mi-servidor.com ./scripts/probar_api.sh   # contra otro servidor
 ```
 
-Requiere `curl` y `jq` (macOS ya los trae). Ejecuta **32 comprobaciones** con los 5 objetivos del reto, muestra
+Requiere `curl` y `jq` (macOS ya los trae). Ejecuta **49 comprobaciones** con los 5 objetivos del reto, muestra
 qué devolvió cada endpoint, sondea los trabajos con barra de progreso y guarda los PNG en `./salida_pruebas/`.
 Sale con código 0 si todo pasa (sirve para CI).
 
@@ -297,7 +297,7 @@ cantidades `1` (RA/Dec astrométricas) y `36` (incertidumbre 3σ).
 | `/api/predict` | ✔ (fechas) | ✔ | | | | ✔ |
 | `/api/overlay` | | | | ✔ (gaia) | ✔ (wise) | |
 | `/api/jobs/{id}` | | | | | | |
-| `POST /api/asteroids/predict` (modelo ONNX local) | | | | | | |
+| `POST /api/asteroids/predict-from-current` | (solo si `image_id` no está en caché) | | | | | ✔ (desde SPHEREx) |
 | `/api/status` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 
 ---
@@ -637,7 +637,7 @@ Imagen del apilado/resta (la `png_url` anterior). Sin API externa (sale de la ca
 | `progress` | 0–1 (para la barra) |
 | `eta_s` | Segundos estimados restantes |
 | `stage` | Texto para mostrar (`Descargando frames 18/43`, `Fotometría 120/239`…) |
-| `queue_position` | 0 = ejecutándose; ≥ 1 = esperando turno |
+| `queue_position` | 0 = ejecutándose; ≥ 1 = esperando turno. Un trabajo que nadie consulta en 30 s (en cola) / 90 s (corriendo) se pausa y se reanuda solo al volver a consultarlo |
 | `poll_after_ms` | Cuánto esperar antes de volver a preguntar |
 | `result` | Con `done`: el resultado completo (el mismo que daría el 200) |
 | `error` | Con `failed`: `{code, message}` |
@@ -790,7 +790,7 @@ externa (como mucho cada 5 min).
     "wise":     {"ok": true, "latency_ms": 512, "last_error": null},
     "horizons": {"ok": true, "latency_ms": 566, "last_error": null}
   },
-  "models": {"asteroid_lstm": {"loaded": true, "file": "asteroid_lstm.onnx", "error": null}}
+  "jobs": {"running": 0, "queued": 0, "paused_now": 0, "paused_total": 0, "max_concurrent": 4, "max_heavy": 1}
 }
 ```
 
@@ -825,36 +825,38 @@ banderas nuevas funciona sin cambiar código).
 
 ---
 
-### 5.15 `POST /api/asteroids/predict` — modelo ML de asteroides (experimental)
+### 5.15 Asteroides — JPL Horizons
 
-**Para qué sirve:** pronosticar la posición de un asteroide a ≤ 3 días con una red LSTM exportada a ONNX,
-a partir de **3 observaciones** del mismo asteroide (huecos ≤ 3 días). **Sin API externa** (corre en el
-backend, CPU, ~25 ms). Es el único endpoint `POST`.
+Un solo endpoint `POST` (el único de la API). Sin modelo de IA: la posición futura es la efeméride oficial de
+JPL Horizons, vista desde SPHEREx (`500@-163182`; si no hay órbita de SPHEREx para esas fechas, geocentro).
+
+| Endpoint | Entrada | Respuesta | APIs externas |
+|---|---|---|---|
+| `/api/asteroids/predict-from-current` | `asteroid_id` (número MPC) + `current_observation {mjd_utc, ra, dec}` + `horizon_days` (0 < h ≤ 30) + `view` + `image_id` | **200 directo** (~0.5–2 s; caché después) | JPL Horizons (e IRSA solo si `image_id` no está en caché) |
+
+**Para qué sirve:** el usuario marca un asteroide en el blink (T3, con la fecha del frame) y da su número MPC.
+El backend comprueba con Horizons que el clic sea ese asteroide (≤ 60″), devuelve dónde estará `horizon_days`
+después, la trayectoria (`track`, 9 puntos) y el píxel de cada posición sobre el PNG mostrado (`view` = los
+`ra, dec, fov, size` de la secuencia).
+
+Respuesta real (3000 Leonardo, `view` de 1200″ y 512 px), resumida:
 
 ```json
-// petición
-{"asteroid_id": 1,
- "observations": [{"epoch": 1800.0, "ra": 40.0, "dec": 10.0},
-                  {"epoch": 1800.5, "ra": 40.1, "dec": 10.1},
-                  {"epoch": 1801.5, "ra": 40.3, "dec": 10.2}],
- "horizon_days": 1.5}
-// respuesta real
-{"asteroid_id": 1, "predicted_ra_deg": 40.65200699257059, "predicted_dec_deg": 10.217896905462919,
- "forecast_epoch": 1803.0, "forecast_time": "2014-12-08T23:58:34.254Z", "horizon_days": 1.5,
- "status": "experimental", "frame": "ICRS, geometría Gaia-céntrica (la del entrenamiento)",
- "time_scale": "epoch = días TCB desde JD 2455197.5 (Gaia)"}
+{"asteroid_id": 3000, "target": "3000 Leonardo (1981 EG19)", "method": "horizons", "observer": "500@-163182",
+ "current_observation": {"mjd_utc": 61280.27836, "time": "2026-08-28T06:40:50.153Z", "ra": 60.39039, "dec": 20.06447,
+                         "ephemeris_ra": 60.39042, "ephemeris_dec": 20.06450, "offset_arcsec": 0.35,
+                         "pixel": {"x": 256.009, "y_top": 256.046, "inside_image": true}},
+ "predicted_ra_deg": 60.5815245, "predicted_dec_deg": 20.0863899, "sigma_arcsec": 0.02,
+ "forecast_mjd_utc": 61280.77836, "forecast_time": "2026-08-28T18:40:50.153Z", "horizon_days": 0.5,
+ "motion": {"arcsec_per_hour": 54.282, "position_angle_deg": 83.03},
+ "pixel": {"x": null, "y_top": null, "inside_image": false},
+ "track": [{"time": "2026-08-28T06:40:50.153Z", "ra": 60.39042, "dec": 20.0645, "pixel": {"x": 256.136, "y_top": 256.124, "inside_image": true}},
+           {"time": "2026-08-28T08:10:50.153Z", "pixel": {"x": 221.776, "y_top": 250.494, "inside_image": true}}, "…"],
+ "warnings": [], "status": "ephemeris"}
 ```
 
-| Campo | Qué es |
-|---|---|
-| `observations[].epoch` | Días TCB desde JD 2455197.5 (escala de Gaia SSO). **No** es Unix ni año |
-| `observations[].time` | Alternativa a `epoch`: fecha ISO UTC; la API la convierte |
-| `horizon_days` | 0 < h ≤ 3, días después de la última observación |
-| `predicted_ra_deg` / `predicted_dec_deg` | Posición pronosticada (ICRS, geometría Gaia) |
-| `forecast_epoch` / `forecast_time` | Fecha de la predicción (escala Gaia / ISO UTC) |
-
-Errores: 400 (no son 3, desordenadas, hueco > 3 días, horizonte fuera de rango…), 503 si el modelo no cargó.
-No sustituye a `GET /api/predict` (JPL Horizons). Todo el detalle: [`MODELO_ASTEROIDES.md`](MODELO_ASTEROIDES.md).
+Errores: 400 (validación; `image_id` sin `view`), 404 (número MPC desconocido), 422 `identity_mismatch` (el clic
+está a más de 60″ de Horizons: otro asteroide o fecha equivocada), 502 (Horizons no respondió).
 
 ---
 
